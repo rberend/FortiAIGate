@@ -38,7 +38,39 @@ The lab is Option C on two VMs with no GPU. A chat request works end to end and 
 
 Pick one layout before you start. They differ in where Ollama runs, whether a GPU is used, and the firewall rule in Step 6.
 
-&#91;embedded content: lab topology · three layout options\]
+```mermaid
+flowchart TB
+  subgraph A["Option A: single host"]
+    direction LR
+    agentA["Agent<br/>OpenAI client"] -- "HTTPS 443 /ai" --> gwA
+    subgraph A1["Host 1"]
+      gwA["FortiAIGate 8.0.2<br/>RTX 3090: Triton + vLLM"] -- "HTTP 11434" --> olA["Ollama qwen2.5:7b<br/>RTX 2080 Super"]
+    end
+  end
+  subgraph B["Option B: two hosts"]
+    direction LR
+    agentB["Agent<br/>OpenAI client"] -- "HTTPS 443 /ai" --> gwB
+    subgraph B1["Host 1"]
+      gwB["FortiAIGate 8.0.2<br/>RTX 3090: Triton + vLLM"]
+    end
+    subgraph B2["Host 2"]
+      olB["Ollama qwen2.5:7b<br/>RTX 2080 Super"]
+    end
+    gwB -- "HTTP 11434" --> olB
+  end
+  subgraph C["Option C: no GPU"]
+    direction LR
+    agentC["Agent<br/>OpenAI client"] -- "HTTPS 443 /ai" --> gwC
+    subgraph C1["Host 1"]
+      gwC["FortiAIGate 8.0.2<br/>CPU only, no inspection"]
+    end
+    subgraph C2["Host 1 or Host 2"]
+      olC["Ollama qwen2.5:7b<br/>on the CPU"]
+    end
+    gwC -- "HTTP 11434" --> olC
+  end
+  A ~~~ B ~~~ C
+```
 
 In every layout the agent's only route to the model is FortiAIGate on Host 1. Option B moves Ollama and the 2080 Super to a second host, and Option C uses no GPU.
 

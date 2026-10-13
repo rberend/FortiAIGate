@@ -1,0 +1,19 @@
+# Secrets and deployment state: never commit these
+.env
+*.key
+*.pem
+*.crt
+*.lic
+faig_deployment_assistant_data/
+*recovery*.tar
+*recovery*.tar.gz
+
+# FortiAIGate release archives (large, and licensed separately)
+FAIG_*.tar
+FAIG_*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
