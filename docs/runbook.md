@@ -58,17 +58,17 @@ flowchart TB
   subgraph A["Option A: single host"]
     direction LR
     agentA["Agent<br/>OpenAI client"] -- "HTTPS 443 /ai" --> gwA
-    subgraph A1["Host 1"]
+    subgraph A1["FortiAIGate server (also runs Ollama)"]
       gwA["FortiAIGate 8.0.2<br/>RTX 3090: Triton + vLLM"] -- "HTTP 11434" --> olA["Ollama qwen2.5:7b<br/>RTX 2080 Super"]
     end
   end
   subgraph B["Option B: two hosts"]
     direction LR
     agentB["Agent<br/>OpenAI client"] -- "HTTPS 443 /ai" --> gwB
-    subgraph B1["Host 1"]
+    subgraph B1["FortiAIGate server"]
       gwB["FortiAIGate 8.0.2<br/>RTX 3090: Triton + vLLM"]
     end
-    subgraph B2["Host 2"]
+    subgraph B2["Ollama server"]
       olB["Ollama qwen2.5:7b<br/>RTX 2080 Super"]
     end
     gwB -- "HTTP 11434" --> olB
@@ -76,10 +76,10 @@ flowchart TB
   subgraph C["Option C: no GPU"]
     direction LR
     agentC["Agent<br/>OpenAI client"] -- "HTTPS 443 /ai" --> gwC
-    subgraph C1["Host 1"]
+    subgraph C1["FortiAIGate server"]
       gwC["FortiAIGate 8.0.2<br/>CPU only, no inspection"]
     end
-    subgraph C2["Host 1 or Host 2"]
+    subgraph C2["FortiAIGate or Ollama server"]
       olC["Ollama qwen2.5:7b<br/>on the CPU"]
     end
     gwC -- "HTTP 11434" --> olC
@@ -87,17 +87,17 @@ flowchart TB
   A ~~~ B ~~~ C
 ```
 
-In every layout the agent's only route to the model is FortiAIGate on Host 1. Option B moves Ollama and the 2080 Super to a second host, and Option C uses no GPU.
+In every layout the agent's only route to the model is the FortiAIGate server. Option B moves Ollama and the 2080 Super to a separate Ollama server, and Option C uses no GPU.
 
 | Item | Option A: single host | Option B: two hosts | Option C: no GPU |
 | --- | --- | --- | --- |
-| FortiAIGate | Host 1 | Host 1 | Host 1, CPU-only |
-| Ollama | Host 1 | Host 2 | Host 1 or Host 2, on the CPU |
-| RTX 3090 (24 GB, compute capability 8.6) | Host 1, selected for FortiAIGate GPU inspection | Host 1, selected for FortiAIGate GPU inspection | Not used |
-| RTX 2080 Super (8 GB, compute capability 7.5) | Host 1, pinned to Ollama | Host 2, used by Ollama | Not used |
-| NVIDIA driver | Host 1 | Both hosts | Not needed |
-| Docker and NVIDIA container toolkit | Host 1 | Host 1 only | Docker on Host 1, no toolkit |
-| Who may reach Ollama on port 11434 | Docker networks on Host 1 | Host 1's IP address | As Option A on one host, as Option B on two |
+| FortiAIGate | FortiAIGate server | FortiAIGate server | FortiAIGate server, CPU-only |
+| Ollama | On the FortiAIGate server | Ollama server | On the FortiAIGate server or a separate Ollama server, on the CPU |
+| RTX 3090 (24 GB, compute capability 8.6) | FortiAIGate server, selected for GPU inspection | FortiAIGate server, selected for GPU inspection | Not used |
+| RTX 2080 Super (8 GB, compute capability 7.5) | FortiAIGate server, pinned to Ollama | Ollama server, used by Ollama | Not used |
+| NVIDIA driver | FortiAIGate server | Both servers | Not needed |
+| Docker and NVIDIA container toolkit | FortiAIGate server | FortiAIGate server only | Docker on the FortiAIGate server, no toolkit |
+| Who may reach Ollama on port 11434 | Docker networks on the FortiAIGate server | The FortiAIGate server's IP address | As Option A on one server, as Option B on two |
 | Guardrails available | Regular-expression, DLP and natural-language policy | Regular-expression, DLP and natural-language policy | None; scanning is paused without a GPU |
 
 The 3090 goes to FortiAIGate because its policy model (vLLM) refuses a card below compute capability 8.0 and warns below about 22 GB. The 2080 Super goes to Ollama because `qwen2.5:7b` is a 4.7 GB model.
@@ -110,9 +110,9 @@ Without GPU inspection, FortiAIGate runs CPU-only and the 3090 can go to Ollama 
 
 ## Before you start
 
-The FortiAIGate CLI runs a preflight on every launch and exits on any FAIL, so check these on Host 1 first.
+The FortiAIGate CLI runs a preflight on every launch and exits on any FAIL, so check these on the FortiAIGate server first.
 
-| Check on Host 1 | Requirement | If not met |
+| Check on the FortiAIGate server | Requirement | If not met |
 | --- | --- | --- |
 | Operating system | Ubuntu 22.04 or later | Not supported |
 | Operator account | Non-root user in an interactive terminal | CLI refuses to start |
@@ -125,13 +125,13 @@ The FortiAIGate CLI runs a preflight on every launch and exits on any FAIL, so c
 | Memory | 32 GB CPU-only, 64 GB when a GPU is present | WARN |
 | Docker Hub | Reachable, or the nginx, PostgreSQL and Redis images preloaded | WARN |
 
-Have these files on Host 1 before Step 4:
+Have these files on the FortiAIGate server before Step 4:
 
 - `deploy-docker-compose.sh` (CLI 0.6.2 or newer; older versions reject current 8.0.2 Triton images)
 - The 8.0.2 release archives, named `FAIG_<component>-V8.0.2-build<N>-FORTINET.tar` or `.tar.gz`
 - The FortiAIGate `.lic` license file
 
-Host 2 in Option B needs only Ubuntu, the NVIDIA driver and about 5 GB of disk for the model.
+The Ollama server in Option B needs only Ubuntu, the NVIDIA driver and about 5 GB of disk for the model.
 
 ## Step 1: Enable SSH (each host)
 
@@ -152,7 +152,7 @@ Give each host a fixed IP address or a DHCP reservation. Step 6 uses these addre
 
 Install the 580 driver branch on every host that holds a card; one driver covers both the RTX 3090 and the RTX 2080 Super. FortiAIGate's Triton image is tagged 25.11, and [Triton 25.11](https://docs.nvidia.com/deeplearning/triton-inference-server/archives/triton-inference-server-2670/release-notes/rel-25-11.html) requires driver release 575 or later on these cards.
 
-Option C: skip this step, and leave the NVIDIA driver uninstalled on Host 1. The FortiAIGate preflight demands the container toolkit whenever `nvidia-smi` works.
+Option C: skip this step, and leave the NVIDIA driver uninstalled on the FortiAIGate server. The FortiAIGate preflight demands the container toolkit whenever `nvidia-smi` works.
 
 1. Check Secure Boot. If it is enabled, the installer asks for a one-time MOK password, and you must enroll that key on the blue screen at the next reboot or the driver will not load.
 
@@ -197,9 +197,9 @@ What each example card can run:
 
 In the FortiAIGate wizard, select only the 3090. Selecting both cards would give the 2080 Super to Triton and leave no card for Ollama.
 
-## Step 3: Install Docker and the NVIDIA container toolkit (Host 1)
+## Step 3: Install Docker and the NVIDIA container toolkit (FortiAIGate server)
 
-Host 1 needs Docker Engine, the Compose plugin and the NVIDIA container toolkit. The Ollama host in Option B needs none of them.
+The FortiAIGate server needs Docker Engine, the Compose plugin and the NVIDIA container toolkit. The Ollama server in Option B needs none of them.
 
 Option C: do items 1 and 2 only.
 
@@ -238,7 +238,7 @@ Option C: do items 1 and 2 only.
    docker run --rm --gpus all ubuntu nvidia-smi
    ```
 
-## Step 4: Install FortiAIGate 8.0.2 (Host 1)
+## Step 4: Install FortiAIGate 8.0.2 (FortiAIGate server)
 
 The CLI loads the release archives itself, generates the Compose project and starts the stack. Do not run `docker load` on the archives by hand.
 
@@ -284,7 +284,7 @@ The CLI loads the release archives itself, generates the Compose project and sta
    | Accelerator inventory with "scanning disabled by licence coverage" | Expected until a license is imported |
    | "Accelerator coverage snapshot is not available yet" just after a reboot | The license manager is still computing its first snapshot; it settles once every Triton and vLLM meter endpoint passes |
    | Triton and vLLM report healthy (Options A and B) | GPU inspection is up |
-6. Open `https://<host1-ip>/ui`, accept the self-signed certificate warning, and create the administrator account.
+6. Open `https://<faig-ip>/ui`, accept the self-signed certificate warning, and create the administrator account.
 7. Sign in, open the Licenses page and upload the `.lic` file.
 8. Restart the API so the built-in detectors are created for the new organization, then run **Status and health** again.
 
@@ -296,7 +296,7 @@ The CLI loads the release archives itself, generates the Compose project and sta
 
 Store the recovery archive somewhere safe. It holds the deployment secrets and the stable deployment identity, which must never be regenerated.
 
-## Step 5: Install Ollama and the model (Host 1 in Option A, Host 2 in Option B)
+## Step 5: Install Ollama and the model (FortiAIGate server in Option A, Ollama server in Option B)
 
 Ollama serves `qwen2.5:7b`, a 4.7 GB model with tool-calling support and a 32K context window ([Ollama library](https://ollama.com/library/qwen2.5)). It fits the 2080 Super's 8 GB.
 
@@ -350,15 +350,15 @@ Restrict port 11434 so that only FortiAIGate can reach Ollama, then register Oll
 
 | Setting | Option A: single host | Option B: two hosts |
 | --- | --- | --- |
-| Ollama address for FortiAIGate | `http://<host1-lan-ip>:11434/v1` | `http://<host2-ip>:11434/v1` |
-| Firewall rule goes on | Host 1 | Host 2 |
-| Source allowed to reach 11434 | Docker's networks, `172.16.0.0/12` | Host 1's IP address |
+| Ollama address for FortiAIGate | `http://<faig-lan-ip>:11434/v1` | `http://<ollama-ip>:11434/v1` |
+| Firewall rule goes on | FortiAIGate server | Ollama server |
+| Source allowed to reach 11434 | Docker's networks, `172.16.0.0/12` | The FortiAIGate server's IP address |
 
 Option C uses the Option A column on one host and the Option B column on two.
 
 Use the LAN address in Option A, never `localhost` or `127.0.0.1`. FortiAIGate runs in containers, and inside a container those names mean the container itself.
 
-1. Option A: allow Docker's networks and block everyone else. Run on Host 1.
+1. Option A: allow Docker's networks and block everyone else. Run on the FortiAIGate server.
 
    ```bash
    sudo ufw allow OpenSSH
@@ -366,15 +366,15 @@ Use the LAN address in Option A, never `localhost` or `127.0.0.1`. FortiAIGate r
    sudo ufw deny 11434/tcp
    sudo ufw enable
    ```
-2. Option B: allow Host 1 and block everyone else. Run on Host 2. Containers on Host 1 leave through Host 1's own address, so that is the address Host 2 sees.
+2. Option B: allow the FortiAIGate server and block everyone else. Run on the Ollama server. Containers on the FortiAIGate server leave through its own address, so that is the address the Ollama server sees.
 
    ```bash
    sudo ufw allow OpenSSH
-   sudo ufw allow from <host1-ip> to any port 11434 proto tcp
+   sudo ufw allow from <faig-ip> to any port 11434 proto tcp
    sudo ufw deny 11434/tcp
    sudo ufw enable
    ```
-3. Test from a container on Host 1; it should list `qwen2.5:7b`. Then run the same `curl` from any other machine; it should fail.
+3. Test from a container on the FortiAIGate server; it should list `qwen2.5:7b`. Then run the same `curl` from any other machine; it should fail.
 
    ```bash
    docker run --rm curlimages/curl -s http://<ollama-ip>:11434/v1/models
@@ -412,13 +412,13 @@ Inspection rules live under **Detectors**, **Guardrails** and **Policy**. Step 8
 
 The agent talks to FortiAIGate with the OpenAI chat-completions API and never contacts Ollama directly. Four things change in the agent: the base URL, the model name, the API key and certificate trust.
 
-- **Base URL:** `https://<host1-ip>/ai/openai/v1`. The gateway serves three dialect namespaces, `/ai/openai`, `/ai/anthropic` and `/ai/gemini`, and rejects any other path under `/ai`.
+- **Base URL:** `https://<faig-ip>/ai/openai/v1`. The gateway serves three dialect namespaces, `/ai/openai`, `/ai/anthropic` and `/ai/gemini`, and rejects any other path under `/ai`.
 - **Model name:** FortiAIGate's public model name, not Ollama's. In this lab it is `ollama-qwen2.5`. The `/models` call below lists the names a key may use.
 - **API key:** the virtual key created in Step 6, not an Ollama value.
-- **Certificate:** FortiAIGate serves a self-signed certificate. Copy `faig_deployment_assistant_data/deployment/web_certs/tls.crt` from the CLI's directory on Host 1 to the agent's machine and trust it. It is valid for Host 1's IP addresses, `localhost` and `127.0.0.1`.
+- **Certificate:** FortiAIGate serves a self-signed certificate. Copy `faig_deployment_assistant_data/deployment/web_certs/tls.crt` from the CLI's directory on the FortiAIGate server to the agent's machine and trust it. It is valid for the FortiAIGate server's IP addresses, `localhost` and `127.0.0.1`.
 - **API style:** if the agent uses Ollama's native `/api/chat` or the `ollama` Python library, switch it to an OpenAI client first.
 
-Test from Host 1 before changing the agent. Set the key and certificate path first, each as its own command.
+Test from the FortiAIGate server before changing the agent. Set the key and certificate path first, each as its own command.
 
 ```bash
 read -rsp "Key: " FAIG_KEY; echo
@@ -426,11 +426,11 @@ CERT=$(find ~ -path '*deployment/web_certs/tls.crt' 2>/dev/null | head -1); echo
 ```
 
 ```bash
-curl -sS --cacert "$CERT" https://<host1-ip>/ai/openai/v1/models \
+curl -sS --cacert "$CERT" https://<faig-ip>/ai/openai/v1/models \
   -H "Authorization: Bearer $FAIG_KEY"
 
 curl -sS --max-time 180 -w '\nHTTP %{http_code}\n' --cacert "$CERT" \
-  https://<host1-ip>/ai/openai/v1/chat/completions \
+  https://<faig-ip>/ai/openai/v1/chat/completions \
   -H "Authorization: Bearer $FAIG_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"ollama-qwen2.5","messages":[{"role":"user","content":"ping"}]}'
@@ -455,10 +455,10 @@ Two ready-made clients use these settings. Keep both files in one directory on t
    python3 -m venv ~/faig-agent
    ~/faig-agent/bin/pip install openai
    ```
-2. Copy the gateway's certificate from Host 1.
+2. Copy the gateway's certificate from the FortiAIGate server.
 
    ```bash
-   scp <user>@<host1-ip>:<cli-directory>/faig_deployment_assistant_data/deployment/web_certs/tls.crt ~/faig-tls.crt
+   scp <user>@<faig-ip>:<cli-directory>/faig_deployment_assistant_data/deployment/web_certs/tls.crt ~/faig-tls.crt
    ```
 3. Start the web console, paste the virtual key when asked, and open `http://<agent-host>:8080`.
 
@@ -479,7 +479,7 @@ The console runs until Ctrl+C and stops when the SSH session closes; start it in
 
 Its starter prompts cover a one-word reply, a tool call and the canary string. Streaming and tools each have a switch, which isolates a failure to one of them.
 
-## Step 8: Add a detector, a guardrail and a policy (Host 1 WebUI)
+## Step 8: Add a detector, a guardrail and a policy (FortiAIGate server WebUI)
 
 Inspection is built from three objects: a detector holds the rules and the action, a guardrail bundles detectors, and a policy applies guardrails to models on the way in and on the way out. All three save without a GPU, but they enforce only when one is in use.
 
@@ -511,7 +511,7 @@ Fortinet ships 51 read-only governance packs, including OWASP LLM Top 10, OWASP 
 
 In this lab the canary passed through with verdict Log, which confirms the WebUI banner: without a GPU, live traffic is not inspected, even by regex rules.
 
-## Step 9: Set up the organization, workspaces, projects and users (Host 1 WebUI)
+## Step 9: Set up the organization, workspaces, projects and users (FortiAIGate server WebUI)
 
 The hierarchy runs organization, workspace, project, virtual key. Budgets and model access narrow at each level.
 
@@ -522,7 +522,7 @@ The hierarchy runs organization, workspace, project, virtual key. Budgets and mo
 | Projects | Groups keys inside a workspace under a shared budget and model access | None |
 | Users | Accounts and invitations, with spend against budget | One Super Admin |
 
-1. On **Organization**, set a real name and set External URL to `https://<host1-ip>`. Invitation links and single sign-on URLs are built from that field.
+1. On **Organization**, set a real name and set External URL to `https://<faig-ip>`. Invitation links and single sign-on URLs are built from that field.
 2. On **Workspaces**, create a workspace for the lab, then create a project inside it on **Projects**.
 3. On **Virtual Keys**, create a workspace-scoped key for the agent, restart the agent with it, and delete the global `lab-agent` key.
 
@@ -536,7 +536,7 @@ The install is complete when every item below is ticked.
 - [ ] Status and health shows every container up, `/ui` responding, and, in Options A and B, Triton and vLLM healthy
 - [ ] The license is imported and the API has been restarted
 - [ ] Ollama answers on `/v1/chat/completions` and the model sits on the intended card
-- [ ] A container on Host 1 can reach port 11434; another machine cannot
+- [ ] A container on the FortiAIGate server can reach port 11434; another machine cannot
 - [ ] The agent gets a reply through FortiAIGate and the request appears in FortiAIGate's logs
 - [ ] A prompt that a guard rule should block is blocked
 
