@@ -1,6 +1,6 @@
 # FortiAIGate 8.0.2 + Ollama Lab Install Runbook
 
-Oct 9, 2026 · @Ray
+Oct 9, 2026 · @Ray · updated Oct 20, 2026 with the first GPU deployment (Proxmox passthrough, license activation, first-apply recovery)
 
 ## Overview
 
@@ -33,6 +33,21 @@ The lab is Option C on two VMs with no GPU. A chat request works end to end and 
 | Regex detector in the Playground | Reported successful |
 | Canary string through the gateway with the policy in place | Not blocked; Traffic Log verdict was Log |
 | Prompt from the web console | HTTP 200 after 41.4 s |
+
+## GPU build as built: Option B on Proxmox, 20 October 2026
+
+The first GPU deployment is Option B: two Ubuntu 26.10 VMs on one Proxmox host, each with a card passed through. FortiAIGate inspects on the 3090; Ollama serves on the 2080 Super. With a license imported, live traffic is inspected, which the Option C lab above could not do.
+
+| Item | Value |
+| --- | --- |
+| FortiAIGate VM | 3090 passed through, 8 vCPU, 32 GB RAM, ~440 GB disk, Ubuntu Server 26.10, CLI state in `~/faig` |
+| Ollama VM | 2080 Super passed through, Ubuntu Server 26.10 |
+| FortiAIGate release | 8.0.2-build0055, GPU inspection enabled, one GPU shared by Triton and vLLM, gateway memory 4 GB |
+| GPU UUIDs | 3090 `GPU-98fd9d66-...` to FortiAIGate; 2080 Super to Ollama |
+| Model loaded during bring-up | `deepseek-r1:7b` on the 2080 Super (4.7 GB) |
+| Driver | 580.178.04 in both guests |
+
+Three things differed from this runbook's earlier CPU-only notes, all captured in the steps and appendix below: passing the cards through on Proxmox has its own gotchas (Appendix A); the 32 GB on the FortiAIGate VM is a preflight WARN, not a FAIL, and the stack ran healthy on a single shared card; and the imported license did not take effect until the VM was rebooted, beyond the documented API restart.
 
 ## Layout options
 
@@ -87,7 +102,7 @@ In every layout the agent's only route to the model is FortiAIGate on Host 1. Op
 
 The 3090 goes to FortiAIGate because its policy model (vLLM) refuses a card below compute capability 8.0 and warns below about 22 GB. The 2080 Super goes to Ollama because `qwen2.5:7b` is a 4.7 GB model.
 
-Choose Option B to make the gateway the only network path to the model, and to keep Ollama's GPU and memory use off the FortiAIGate host. If the two systems are VMs on one Proxmox host, pass each card through to its VM first; the driver steps inside the guest are the same.
+Choose Option B to make the gateway the only network path to the model, and to keep Ollama's GPU and memory use off the FortiAIGate host. If the two systems are VMs on one Proxmox host, pass each card through to its VM first (Appendix A); the Step 2 driver steps inside the guest are then the same.
 
 Choose Option C when no NVIDIA card is available. FortiAIGate then runs CPU-only. The live 8.0.2 WebUI pauses security scanning in this mode and passes traffic uninspected, so the gateway routes, meters and logs requests but blocks nothing. Ollama also answers more slowly on the CPU.
 
@@ -257,14 +272,17 @@ The CLI loads the release archives itself, generates the Compose project and sta
    | Use a FortiCare proxy | No |
 
    In Options A and B the summary should then read "GPU placement: one GPU shared by Triton and vLLM". In Option C it reads "Policy model: unavailable (POLICY detectors fail closed)".
-4. Deploy. Choose **3. Deploy or reapply Docker Compose**, answer Yes to creating the recovery archive, store the path it prints, then type `APPLY`.
+4. Deploy. Choose **3. Deploy or reapply Docker Compose**, answer Yes to creating the recovery archive, store the path it prints, then type `APPLY`. On a busy or 32 GB host the first `APPLY` can end with `dependency failed to start: container faig-postgres is unhealthy`: PostgreSQL misses its first-start healthcheck window while the ~45 GB of GPU images (`vllm-server` 20 GB, `faig-models` 15 GB, `custom-triton` 9.6 GB) load, then recovers on its own. This leaves `nginx`, `logd` and `dlp-scanner` in `Created`. It is not a failed deployment; see item 5.
 5. Check the result with **4. Inspect or control the deployment**, then **1. Status and health**. In Options A and B the first start takes several minutes while the models load, and the health checks allow up to 30 minutes.
 
    | What you see | Meaning |
    | --- | --- |
    | `/ui` returns 502 shortly after apply | Still starting; wait and rerun the status check |
+   | First `APPLY` ended "faig-postgres is unhealthy" | Run `./compose.sh ps -a`; if postgres now reads `healthy`, re-run `./compose.sh up -d --remove-orphans` from the deployment folder to start the containers left in `Created`. The model-loader and `logd-api-ready` containers staying `Exited (0)` is success, not failure |
    | `/ai/` returns 403 | Expected until a license is imported |
+   | `/ai/` returns 404 after the license is imported | Licensed, but no provider or model route exists yet. Expected until Step 6 registers Ollama |
    | Accelerator inventory with "scanning disabled by licence coverage" | Expected until a license is imported |
+   | "Accelerator coverage snapshot is not available yet" just after a reboot | The license manager is still computing its first snapshot; it settles once every Triton and vLLM meter endpoint passes |
    | Triton and vLLM report healthy (Options A and B) | GPU inspection is up |
 6. Open `https://<host1-ip>/ui`, accept the self-signed certificate warning, and create the administrator account.
 7. Sign in, open the Licenses page and upload the `.lic` file.
@@ -273,6 +291,8 @@ The CLI loads the release archives itself, generates the Compose project and sta
    ```bash
    ~/faig/faig_deployment_assistant_data/deployment/compose.sh restart api
    ```
+
+   On the 20 October build the imported license did not activate after `restart api` alone; `/ai/` stayed 403 and licensed functions stayed locked until the VM was rebooted. If the license does not take effect, reboot the FortiAIGate host and recheck **Status and health**.
 
 Store the recovery archive somewhere safe. It holds the deployment secrets and the stable deployment identity, which must never be regenerated.
 
@@ -522,7 +542,10 @@ The install is complete when every item below is ticked.
 
 | Symptom | Action |
 | --- | --- |
-| `nvidia-smi` cannot communicate with the driver after reboot | The Secure Boot key was not enrolled. Reinstall the driver and complete the MOK enrollment at boot, or disable Secure Boot |
+| `nvidia-smi` cannot communicate with the driver after reboot | Secure Boot is blocking the module. On bare metal, enroll the MOK key at boot or disable Secure Boot. On a Proxmox VM, the `-open` module builds under DKMS but will not load with Secure Boot on: `dkms status` shows "installed", `sudo modprobe nvidia` returns "Key was rejected by service", and `mokutil --sb-state` reads enabled. Disable Secure Boot in the VM's OVMF, or recreate the EFI disk with `pre-enrolled-keys=0`. See Appendix A |
+| Guest VM sees the card but passthrough misbehaves, or only some PCI functions bind to vfio | A Turing card (2080 Super) has four functions that must all reach the guest; the USB and UCSI functions need a boot-time rebind on the host. See Appendix A |
+| First `APPLY` ended "dependency failed to start: faig-postgres is unhealthy" | PostgreSQL missed its first-start healthcheck under image-load contention and recovered on its own. Confirm `./compose.sh ps -a` shows postgres `healthy`, then re-run `./compose.sh up -d --remove-orphans` |
+| License imported but functions stay locked / `/ai/` stays 403 | After `compose.sh restart api`, reboot the FortiAIGate host; on the 20 October build the license did not activate until a full reboot |
 | Preflight: "NVIDIA runtime is incomplete" | Run `sudo nvidia-ctk runtime configure --runtime=docker`, then `sudo systemctl restart docker` |
 | Preflight: port 443 answers, or Kubernetes detected | Something else holds the port. Remove it, or rerun the wizard with HTTPS port `9443` |
 | Apply stops: vLLM GPU has compute capability 7.5 | Only the 2080 Super was selected. Rerun the wizard and select only the 3090 |
@@ -542,6 +565,45 @@ Routing, logging and the test agent work. Enforcement does not, and it cannot in
 - [ ] Fix the Organization name and External URL, and create the workspace and project in Step 9.
 - [ ] Confirm tool calls through the gateway with the web console's subnet prompt. A streamed reply has worked; tool calls are untested.
 - [ ] If a single 24 GB card is used later, confirm that Triton and vLLM both load on it and that the host has the 64 GB the CLI recommends.
+
+## Appendix A: GPU passthrough on Proxmox
+
+When FortiAIGate and Ollama are VMs on one Proxmox host, each card is passed through to its VM before the Step 2 driver install. These are the points that cost time on the 20 October build.
+
+**Host: bind both cards to vfio-pci before any guest driver can claim them.**
+
+1. Enable **VT-d** and **Above 4G Decoding** in the host BIOS, and add `intel_iommu=on iommu=pt` to the kernel command line.
+2. Bind every function of both cards to `vfio-pci` by vendor:device ID in `/etc/modprobe.d/vfio.conf`, and blacklist `nouveau` and `nvidia` on the host. The Ampere 3090 has only GPU + HD-audio and binds cleanly. A Turing card such as the 2080 Super exposes **four** functions — GPU, HD-audio, a USB 3.1 controller, and a USB-C UCSI controller — which all share one IOMMU group, so all four must reach the guest. The USB and UCSI functions get claimed by the host's `xhci_hcd` and `nvidia-gpu` drivers and will not move to vfio from `vfio.conf` alone; a small boot-time systemd unit that unbinds them and writes `vfio-pci` to each one's `driver_override`, then binds them, fixes it.
+3. After a host reboot, confirm every function reads `Kernel driver in use: vfio-pci`:
+
+   ```bash
+   lspci -nnk -d 10de:
+   ```
+
+   Also confirm each card is alone in its IOMMU group. Clean isolation means no ACS override is needed.
+
+**Guest: q35 + OVMF, GPU added after the OS, and Secure Boot off.**
+
+- Create each GPU VM as machine type **q35** with **OVMF (UEFI)** firmware. SeaBIOS/i440fx is the fragile path for passthrough and a common source of code 43.
+- Install Ubuntu **before** attaching the card, so the installer uses the virtual display. Then add the GPU and power-cycle:
+
+  ```bash
+  qm set <vmid> -hostpci0 <pci-address>,pcie=1     # e.g. 01:00 ; no x-vga=1 on Proxmox 8
+  qm stop <vmid> && qm start <vmid>                # hostpci/vga changes need stop/start, not reboot
+  ```
+
+  Omitting `x-vga=1` keeps the noVNC console on the virtual display, so you do not lose the console when the card is attached.
+- The NVIDIA `-open` driver builds under DKMS but will not load if the VM's OVMF has **Secure Boot enabled**: `nvidia-smi` reports "couldn't communicate with the driver", `dkms status` shows the module "installed", and `sudo modprobe nvidia` returns "Key was rejected by service". Disable Secure Boot in the VM's OVMF (Device Manager → Secure Boot Configuration), or recreate the EFI disk with `pre-enrolled-keys=0`, then load the module:
+
+  ```bash
+  mokutil --sb-state        # should read: SecureBoot disabled
+  sudo modprobe nvidia
+  nvidia-smi                # the card and ~24 GB (3090) or ~8 GB (2080 Super) appear
+  ```
+
+- If the noVNC console shows "unable to connect" after attaching the card, do a full `qm stop`/`qm start` and restart `pveproxy` on the host. Once the guest has an IP and SSH, drive the rest over SSH rather than the console.
+
+With both guests showing their card in `nvidia-smi`, continue from Step 2 item 4 (record the UUIDs) and Step 3 (Docker and the container toolkit on the FortiAIGate host only).
 
 ## Sources
 
