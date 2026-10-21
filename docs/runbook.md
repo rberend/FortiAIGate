@@ -392,7 +392,7 @@ Then register Ollama and issue a key in the FortiAIGate WebUI. These pages were 
    | Base URL | The Ollama address from the table above, starting with `http://`. Ollama serves plain HTTP on 11434 |
    | API Format | OpenAI-compatible |
 3. Click **Add Credential**. The form requires one even though Ollama does not check keys, so give it a name and a placeholder API key, and leave Weight at `1`.
-4. Click **Add Model**. Set Model ID to the name exactly as `ollama list` shows it, such as `qwen2.5:7b`, and enter a price; the dialog requires at least one cost, and `0.01` is accepted. Click **Test Connectivity**, then **Save**, then **Add Integration**.
+4. Click **Add Model**. Set Model ID to the name exactly as `ollama list` shows it, such as `qwen2.5:7b`, and enter a price; the dialog requires at least one cost, and `0.01` is accepted. Click **Test Connectivity**, then **Save**, then **Add Integration**. The connectivity test has about a 10-second deadline and posts to the model, so a cold model load can fail it with `context deadline exceeded` even when the path is fine (a plain `curl` from the FortiAIGate server to `http://<ollama-ip>:11434/v1/models` still returns 200). Pre-warm the model with one request and set `OLLAMA_KEEP_ALIVE` (Step 5) before testing, then retry.
 5. Open **Virtual Keys** and click **Create Virtual Key**.
 
    | Setting | Value |
@@ -413,7 +413,7 @@ Inspection rules live under **Detectors**, **Guardrails** and **Policy**. Step 8
 The agent talks to FortiAIGate with the OpenAI chat-completions API and never contacts Ollama directly. Four things change in the agent: the base URL, the model name, the API key and certificate trust.
 
 - **Base URL:** `https://<faig-ip>/ai/openai/v1`. The gateway serves three dialect namespaces, `/ai/openai`, `/ai/anthropic` and `/ai/gemini`, and rejects any other path under `/ai`.
-- **Model name:** FortiAIGate's public model name, not Ollama's. In this lab it is `ollama-qwen2.5`. The `/models` call below lists the names a key may use.
+- **Model name:** FortiAIGate's public model name, not Ollama's. It is the provider slug plus the model ID with the colon normalized to a dash, so `deepseek-r1:7b` under slug `ollama` becomes `ollama-deepseek-r1-7b`. The `/models` call below lists the exact names a key may use.
 - **API key:** the virtual key created in Step 6, not an Ollama value.
 - **Certificate:** FortiAIGate serves a self-signed certificate. Copy `faig_deployment_assistant_data/deployment/web_certs/tls.crt` from the CLI's directory on the FortiAIGate server to the agent's machine and trust it. It is valid for the FortiAIGate server's IP addresses, `localhost` and `127.0.0.1`.
 - **API style:** if the agent uses Ollama's native `/api/chat` or the `ollama` Python library, switch it to an OpenAI client first.
@@ -473,7 +473,7 @@ Two ready-made clients use these settings. Keep both files in one directory on t
 
 Both clients default to this lab's gateway URL and model; set `FAIG_BASE_URL` and `FAIG_MODEL` to change them. The virtual key stays in the server process and is never sent to the browser.
 
-The web console has no login, so anyone who can reach port 8080 can send prompts with the key. Without `--host 0.0.0.0` it listens only on 127.0.0.1. Limit the port to your workstation with `sudo ufw allow from <workstation-ip> to any port 8080 proto tcp`.
+The web console has no login, so anyone who can reach port 8080 can send prompts with the key. Without `--host 0.0.0.0` it listens only on 127.0.0.1. Limit the port to your workstation with `sudo ufw allow from <workstation-ip> to any port 8080 proto tcp`. If you run the console on the Ollama server, the `ufw enable` from Step 6 is default-deny inbound and blocks 8080 until you add that rule; the console will report it is listening while the browser still cannot reach it.
 
 The console runs until Ctrl+C and stops when the SSH session closes; start it inside `tmux` to keep it running.
 
@@ -552,6 +552,8 @@ The install is complete when every item below is ticked.
 | "Target images are incomplete" or "missing archive" | An archive is absent or misnamed. Check the file names against Step 4 |
 | Triton or vLLM never becomes healthy on the shared 3090 | Check their logs with **5**, then **3. Show recent logs**. vLLM reserves 80% of the card. If Triton runs out of GPU memory, lower `VLLM_GPU_MEMORY_UTILIZATION` in `.env`, regenerate and reapply |
 | FortiAIGate cannot reach Ollama | Check `OLLAMA_HOST`, the firewall rule, and that the provider address is a LAN IP rather than `localhost` |
+| Add Model: Test Connectivity fails with `context deadline exceeded` | The ~10 s probe timed out on a cold model load, not a broken path. Confirm a container can reach Ollama (`docker run --rm curlimages/curl -s http://<ollama-ip>:11434/v1/models`), pre-warm the model with one request, set `OLLAMA_KEEP_ALIVE`, then retry |
+| A regex detector blocks every prompt, benign ones included | A pattern is matching all input — usually an empty pattern line (an empty regex matches everything) or an over-broad one such as `.*`. Open the detector, remove the blank/greedy pattern, and re-test in the Playground: a benign prompt should pass, the canary should block |
 | Ollama loads the model on the 3090 in Option A | Check the `CUDA_VISIBLE_DEVICES` UUID in the override, restart Ollama, and recheck with `ollama ps` |
 | A service is unhealthy | Main menu **5**, then **3. Show recent logs**, and enter the service name |
 
