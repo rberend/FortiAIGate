@@ -422,6 +422,8 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
   .presets button { grid-template-columns: 1fr; gap: 0.1rem; }
   h1 { flex-basis: 100%; }
 }
+.ctx { font-size: 0.8125rem; color: var(--muted); align-self: center; }
+.ctx.warn { color: var(--tool); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -430,7 +432,8 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
   <label class="control">Model <select id="model"></select></label>
   <label class="control"><input type="checkbox" id="stream" checked> Stream replies</label>
   <label class="control"><input type="checkbox" id="tools" checked> Offer tools</label>
-  <button class="plain" id="new" type="button">New conversation</button>
+  <button class="plain" id="new" type="button" title="Clear the conversation so earlier messages are no longer sent to the gateway or scanned by its guardrails.">Clear history</button>
+  <span class="ctx" id="ctx" title="Every prompt is sent to the gateway together with the earlier messages counted here, and the guardrails scan all of them. An earlier canary or secret stays in context until you clear it."></span>
   <details class="system">
     <summary>System prompt</summary>
     <textarea id="system" aria-label="System prompt" spellcheck="false"></textarea>
@@ -604,6 +607,7 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
         if (!text.trim() && !view.reply.innerHTML) view.reply.appendChild(el("p", "outcome", "The model returned an empty reply."));
         history.push({ role: "user", content: prompt });
         ev.messages.forEach(function (m) { history.push(m); });
+        updateCtx();
       } else if (ev.type === "error") {
         finished = true;
         if (ev.kind === "gateway") {
@@ -695,11 +699,19 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
   });
   $("input").addEventListener("input", grow);
   $("stop").addEventListener("click", function () { if (controller) controller.abort(); });
+  function updateCtx() {
+    var n = history.length;
+    var ctx = $("ctx");
+    if (!ctx) return;
+    ctx.textContent = n ? n + " earlier message" + (n === 1 ? "" : "s") + " in context" : "No earlier messages";
+    ctx.className = "ctx" + (n ? " warn" : "");
+  }
   $("new").addEventListener("click", function () {
     if (controller) controller.abort();
     history = [];
     $("turns").textContent = "";
     $("empty").hidden = false;
+    updateCtx();
     $("input").focus();
   });
   Array.prototype.forEach.call(document.querySelectorAll(".presets button"), function (button) {
@@ -728,6 +740,7 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
       fillModels(names, cfg.model);
     });
   }).catch(function () {});
+  updateCtx();
   $("input").focus();
 })();
 </script>
