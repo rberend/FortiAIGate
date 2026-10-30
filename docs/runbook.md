@@ -563,6 +563,53 @@ MCP is off unless `FAIG_MCP_CONFIG` points at a config file, so the agent behave
 
 Use a tool-calling model such as `ollama-qwen2.5-7b`; a reasoning model like `deepseek-r1` calls tools unreliably. To add new tools, add `@mcp.tool()` functions to `mcp_server.py` (or point the config at another MCP server); no agent change is needed. Retrieval (RAG) plugs in the same way, as a `search` tool, in the next step.
 
+## Step 11: Add retrieval (RAG) over documentation (agent machine)
+
+RAG is added as one more MCP tool, `search_docs`, so it rides the same path as Step 10: when the model calls it, the agent embeds the query with Ollama, pulls the closest passages from a Qdrant vector store, and returns them. Those passages travel back through FortiAIGate as the tool's result, so **the gateway inspects what retrieval surfaces** - a doc chunk carrying a secret or PII is scanned before it reaches the model.
+
+Four files in `agent/` provide this:
+
+| File | What it is |
+| --- | --- |
+| `rag_common.py` | Document loading (PDF, Markdown, text, HTML), chunking, Ollama embeddings, and the Qdrant client. |
+| `rag_ingest.py` | Builds or extends the index. Re-runnable: chunk ids are deterministic, so re-ingesting updates a file rather than duplicating it. |
+| `rag_server.py` | A FastMCP server exposing the `search_docs` tool. |
+| `mcp.config.rag.example.json` | A config that enables both the lab tools and the RAG server. |
+
+All of this runs on the agent/Ollama host. Embeddings go straight to Ollama; only the search results pass through the gateway.
+
+1. Run Qdrant (Docker) on the agent host. If Docker is not installed there, install it as in Step 3, item 1.
+
+   ```bash
+   docker run -d --name qdrant --restart unless-stopped \
+     -p 6333:6333 -v ~/qdrant_storage:/qdrant/storage qdrant/qdrant
+   ```
+2. Pull an embedding model and install the Python dependencies.
+
+   ```bash
+   ollama pull nomic-embed-text
+   ~/faig-agent/bin/pip install -r agent/requirements.txt   # adds qdrant-client, pypdf
+   ```
+3. Put documents where the ingester can read them, then build the index. The default folder is `rag_docs/` in the repo (git-ignored); or pass any file or folder.
+
+   ```bash
+   mkdir -p rag_docs
+   # download the FortiSIEM 7.6 docs (PDF/HTML) into rag_docs/, then:
+   ~/faig-agent/bin/python agent/rag_ingest.py
+   # or a specific path:  ~/faig-agent/bin/python agent/rag_ingest.py ~/fortisiem-docs
+   ```
+4. Enable the RAG server in the agent's MCP config and restart the agent.
+
+   ```bash
+   cp agent/mcp.config.rag.example.json agent/mcp.config.json
+   export FAIG_MCP_CONFIG=agent/mcp.config.json
+   # relaunch faig_web.py as in Step 7
+   ```
+
+   On start it now prints `MCP tools: calculate, get_current_time, search_docs, subnet_info`. Ask a product question in the console; the model should call `search_docs`, and the retrieved passages appear in the reply and in FortiAIGate's logs.
+
+To extend the index, drop more files in `rag_docs/` (or anywhere) and run `rag_ingest.py` again - no restart needed, since the server queries Qdrant live. Configuration (Ollama URL, Qdrant URL, collection name, chunk size, top-k) is in `rag_common.py` via `RAG_*` environment variables.
+
 ## Verification and troubleshooting
 
 The install is complete when every item below is ticked.
@@ -595,7 +642,9 @@ The install is complete when every item below is ticked.
 | A service is unhealthy | Main menu **5**, then **3. Show recent logs**, and enter the service name |
 | Agent prints `MCP tools: none` or an `MCP server error` line | The MCP server did not start. Check the printed error; usually the `command`/`args` path in the config is wrong (args are relative to where you launch the agent) or `mcp` is not installed in the venv |
 | MCP import error about `FastMCP` renamed to `MCPServer` | `mcp` 2.x is installed; this agent uses the v1 API. Reinstall with the pin: `~/faig-agent/bin/pip install "mcp>=1.2,<2"` |
-| A tool never fires, model answers in prose instead | Use a tool-calling model (`ollama-qwen2.5-7b`), confirm **Offer tools** is on, and check the model actually fits in VRAM with `ollama ps` |
+| A tool never fires, model answers in prose instead | Use a tool-calling model (`ollama-qwen2.5-7b` or `ollama-qwen3.5-9b`), confirm **Offer tools** is on, and check the model actually fits in VRAM with `ollama ps` |
+| `search_docs` returns `embedding failed` | Ollama is unreachable or the embedding model is missing. Check `RAG_OLLAMA_URL` and run `ollama pull nomic-embed-text` |
+| `search_docs` returns `search failed` or `no matches` | Qdrant is not running (`docker ps` for the `qdrant` container) or the index is empty - run `rag_ingest.py` and confirm it reports chunks upserted |
 
 ## Open items
 

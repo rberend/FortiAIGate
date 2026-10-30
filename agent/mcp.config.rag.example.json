@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "lab-tools": {
+      "command": "python",
+      "args": ["agent/mcp_server.py"]
+    },
+    "rag-docs": {
+      "command": "python",
+      "args": ["agent/rag_server.py"]
+    }
+  }
+}
