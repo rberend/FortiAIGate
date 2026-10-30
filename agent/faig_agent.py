@@ -14,7 +14,7 @@ Setup (once):
 
 Configuration (environment variables):
     FAIG_BASE_URL   Gateway base URL.   Default: https://10.20.70.4/ai/openai/v1
-    FAIG_MODEL      Public model name.  Default: ollama-qwen2.5
+    FAIG_MODEL      Public model name.  Default: ollama-qwen3.5-9b
     FAIG_CA_CERT    Path to the gateway's tls.crt, for its self-signed certificate.
     FAIG_API_KEY    Virtual key. If unset, the agent prompts for it without echo.
 
@@ -48,7 +48,7 @@ except ImportError:
     sys.exit("The 'openai' package is missing. Install it with: pip install openai")
 
 DEFAULT_BASE_URL = "https://10.20.70.4/ai/openai/v1"
-DEFAULT_MODEL = "ollama-qwen2.5"
+DEFAULT_MODEL = "ollama-qwen3.5-9b"
 DEFAULT_SYSTEM = (
     "You are a concise assistant for a network security lab. "
     "Use a tool when it gives a more reliable answer than you can give yourself."
