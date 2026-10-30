@@ -17,6 +17,10 @@ Configuration (environment variables):
     FAIG_MODEL      Public model name.  Default: ollama-qwen3.5-9b
     FAIG_CA_CERT    Path to the gateway's tls.crt, for its self-signed certificate.
     FAIG_API_KEY    Virtual key. If unset, the agent prompts for it without echo.
+    FAIG_MCP_CONFIG Optional path to an MCP config (see mcp.config.example.json).
+                    When set, the listed MCP servers' tools are offered too, and
+                    an MCP tool replaces an inline tool of the same name. Needs
+                    the 'mcp' package.
 
 Run:
     ~/faig-agent/bin/python faig_agent.py                 # interactive chat
@@ -54,6 +58,10 @@ DEFAULT_SYSTEM = (
     "Use a tool when it gives a more reliable answer than you can give yourself."
 )
 MAX_TOOL_STEPS = 6
+
+# Set by init_mcp_from_env() when FAIG_MCP_CONFIG points at an MCP config file.
+# While None, the agent uses only the inline tools below.
+_MCP_BRIDGE = None
 
 
 # --------------------------------------------------------------------------
@@ -183,6 +191,8 @@ def run_tool(name: str, arguments_json: str) -> str:
         args = json.loads(arguments_json) if arguments_json.strip() else {}
         if not isinstance(args, dict):
             raise ValueError("tool arguments must be a JSON object")
+        if _MCP_BRIDGE is not None and name in _MCP_BRIDGE.names():
+            return _MCP_BRIDGE.call(name, args)   # already a string for the model
         func = TOOL_FUNCTIONS.get(name)
         if func is None:
             raise ValueError(f"unknown tool: {name}")
@@ -190,6 +200,31 @@ def run_tool(name: str, arguments_json: str) -> str:
     except Exception as exc:  # the error goes back to the model, which can retry
         result = {"error": f"{type(exc).__name__}: {exc}"}
     return json.dumps(result)
+
+
+def init_mcp_from_env():
+    """Connect to the MCP servers in FAIG_MCP_CONFIG, if that variable is set,
+    and route their tools through the agent. Returns the MCPBridge, or None when
+    no config is set. Call once at startup; both the CLI and the web console use
+    whatever this registers. With no config the agent uses only its inline tools.
+    """
+    global _MCP_BRIDGE
+    path = os.environ.get("FAIG_MCP_CONFIG")
+    if not path:
+        return None
+    from mcp_bridge import MCPBridge, load_config  # imported only when MCP is enabled
+    _MCP_BRIDGE = MCPBridge(load_config(path))
+    return _MCP_BRIDGE
+
+
+def active_tool_schemas() -> list[dict]:
+    """The inline tool schemas, with any MCP tool of the same name taking over."""
+    if _MCP_BRIDGE is None:
+        return TOOL_SCHEMAS
+    by_name = {schema["function"]["name"]: schema for schema in TOOL_SCHEMAS}
+    for schema in _MCP_BRIDGE.list_schemas():
+        by_name[schema["function"]["name"]] = schema
+    return list(by_name.values())
 
 
 # --------------------------------------------------------------------------
@@ -320,7 +355,7 @@ def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = 
     for number in range(1, MAX_TOOL_STEPS + 1):
         kwargs: dict = {"model": model, "messages": history + new}
         if tools:
-            kwargs["tools"] = TOOL_SCHEMAS
+            kwargs["tools"] = active_tool_schemas()
         yield {"type": "request", "number": number}
         complete = _stream_completion if stream else _single_completion
         message = yield from complete(client, kwargs)
@@ -504,6 +539,17 @@ def main() -> int:
         return 2
 
     client = build_client(args.base_url, api_key, args.ca_cert, args.timeout)
+
+    try:
+        bridge = init_mcp_from_env()
+    except Exception as exc:  # a bad MCP config should not stop the agent
+        print(f"MCP disabled ({exc}).", file=sys.stderr)
+        bridge = None
+    if bridge is not None:
+        print(f"MCP tools: {', '.join(sorted(bridge.names())) or 'none'}")
+        for err in bridge.errors():
+            print(f"  MCP server error: {err}", file=sys.stderr)
+
     agent = Agent(client, args.model, args.system,
                   stream=not args.no_stream, tools=not args.no_tools, verbose=args.verbose)
 

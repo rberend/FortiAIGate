@@ -17,3 +17,6 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+
+# Live MCP config may hold server paths or secrets; keep only the example
+agent/mcp.config.json

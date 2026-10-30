@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lab-tools": {
+      "command": "python",
+      "args": ["agent/mcp_server.py"]
+    }
+  }
+}
