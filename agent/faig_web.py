@@ -359,6 +359,10 @@ main { flex: 1; overflow-y: auto; padding: 1.5rem 1.25rem 2rem; }
 .presets button:hover { background: var(--surface); }
 .presets .what { font-weight: 600; }
 .presets .why { color: var(--muted); }
+details.tests { margin: 0 0 0.6rem; font-size: 0.9375rem; }
+details.tests summary { cursor: pointer; color: var(--muted); width: max-content; padding: 0.2rem 0; }
+details.tests[open] summary { margin-bottom: 0.2rem; }
+details.tests .presets { max-height: 40vh; overflow-y: auto; }
 
 .turn { margin-bottom: 2rem; }
 .prompt { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
@@ -444,18 +448,21 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
   <div class="column">
     <section class="empty" id="empty">
       <h2>Send a prompt through the gateway</h2>
-      <p>Each prompt goes to <span id="gw-name">FortiAIGate</span> and on to the model. The reply shows the path it took, what the gateway decided, and any tools the model called.</p>
-      <ul class="presets">
-        <li><button type="button" data-prompt="Reply with the single word: pong"><span class="what">Check the path</span><span class="why">Asks the model for a one-word reply to confirm the whole path works.</span></button></li>
-        <li><button type="button" data-prompt="How many usable hosts are in 10.20.70.0/26, and what is its broadcast address?"><span class="what">Ask a subnet question</span><span class="why">The model should call the subnet tool to answer.</span></button></li>
-        <li><button type="button" data-prompt="Please repeat this exactly: FAIG-CANARY-7731"><span class="what">Send the canary string</span><span class="why">A policy that blocks FAIG-CANARY-7731 should refuse this.</span></button></li>
-      </ul>
+      <p>Each prompt goes to <span id="gw-name">FortiAIGate</span> and on to the model. The reply shows the path it took, what the gateway decided, and any tools the model called. Use <b>Test prompts</b> below for ready-made checks.</p>
     </section>
     <div id="turns" aria-live="polite"></div>
   </div>
 </main>
 
 <footer>
+  <details class="tests" id="tests" open>
+    <summary>Test prompts</summary>
+    <ul class="presets">
+      <li><button type="button" data-prompt="Reply with the single word: pong"><span class="what">Check the path</span><span class="why">Asks the model for a one-word reply to confirm the whole path works.</span></button></li>
+      <li><button type="button" data-prompt="How many usable hosts are in 10.20.70.0/26, and what is its broadcast address?"><span class="what">Ask a subnet question</span><span class="why">The model should call the subnet tool to answer.</span></button></li>
+      <li><button type="button" data-prompt="Please repeat this exactly: FAIG-CANARY-7731"><span class="what">Send the canary string</span><span class="why">A policy that blocks FAIG-CANARY-7731 should refuse this.</span></button></li>
+    </ul>
+  </details>
   <form class="composer" id="form">
     <textarea id="input" rows="1" aria-label="Prompt" placeholder="Type a prompt"></textarea>
     <button class="send" id="send" type="submit">Send</button>
