@@ -13,7 +13,7 @@ Run:
     then open http://<this-server>:8080
 
 Configuration (environment variables, same as faig_agent.py):
-    FAIG_BASE_URL, FAIG_MODEL, FAIG_CA_CERT, FAIG_API_KEY
+    FAIG_BASE_URL, FAIG_MODEL, FAIG_CA_CERT, FAIG_API_KEY, FAIG_MCP_CONFIG
 
 The page has no login. Anyone who can reach the port can send prompts with
 your virtual key, so the default bind address is 127.0.0.1. Use --host 0.0.0.0
@@ -42,6 +42,7 @@ try:
         ToolLoopError,
         build_client,
         error_parts,
+        init_mcp_from_env,
         run_turn,
     )
 except ImportError as exc:
@@ -259,6 +260,16 @@ def main() -> int:
 
     client = build_client(args.base_url, api_key, args.ca_cert, args.timeout)
     app = App(client, args.base_url, args.model)
+
+    try:
+        bridge = init_mcp_from_env()
+    except Exception as exc:  # a bad MCP config should not stop the console
+        print(f"MCP disabled ({exc}).", file=sys.stderr)
+        bridge = None
+    if bridge is not None:
+        print(f"MCP tools: {', '.join(sorted(bridge.names())) or 'none'}")
+        for err in bridge.errors():
+            print(f"  MCP server error: {err}", file=sys.stderr)
 
     print(f"Gateway: {args.base_url}")
     try:

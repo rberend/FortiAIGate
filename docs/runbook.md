@@ -526,6 +526,43 @@ The hierarchy runs organization, workspace, project, virtual key. Budgets and mo
 2. On **Workspaces**, create a workspace for the lab, then create a project inside it on **Projects**.
 3. On **Virtual Keys**, create a workspace-scoped key for the agent, restart the agent with it, and delete the global `lab-agent` key.
 
+## Step 10: Add tools with an MCP server (agent machine)
+
+The agent ships with three inline tools (time, calculator, subnet). To grow the tool set without editing the agent each time, it can act as an **MCP client**: it connects to one or more MCP servers, offers their tools to the model, and routes the model's tool calls to them. Tool execution happens agent-side, so the agent-to-MCP hop is not inspected, but the tool definitions, call arguments and results still travel through FortiAIGate in the conversation and are scanned there. An MCP server runs with the agent's privileges, so treat it as trusted code.
+
+Three files in `agent/` provide this:
+
+| File | What it is |
+| --- | --- |
+| `mcp_server.py` | A FastMCP server that re-implements the three inline tools over MCP. The starting point for adding new tools. |
+| `mcp_bridge.py` | Runs the async MCP sessions in a background loop and exposes them to the synchronous agent. |
+| `mcp.config.example.json` | A sample config in the standard `mcpServers` shape. |
+
+MCP is off unless `FAIG_MCP_CONFIG` points at a config file, so the agent behaves exactly as before until you enable it.
+
+1. Install the dependency (it is now in `requirements.txt`).
+
+   ```bash
+   ~/faig-agent/bin/pip install -r agent/requirements.txt   # adds mcp (<2)
+   ```
+2. Make a config from the example. A `command` of `python` runs under the agent's own interpreter, so the server shares the venv; `args` paths are relative to where you launch the agent (the repo root).
+
+   ```bash
+   cp agent/mcp.config.example.json agent/mcp.config.json
+   ```
+3. Launch the console (or `faig_agent.py`) with `FAIG_MCP_CONFIG` set.
+
+   ```bash
+   export FAIG_BASE_URL=https://<faig-ip>/ai/openai/v1
+   export FAIG_MODEL=ollama-qwen2.5-7b
+   export FAIG_MCP_CONFIG=agent/mcp.config.json
+   FAIG_CA_CERT=~/faig-tls.crt ~/faig-agent/bin/python agent/faig_web.py --host 0.0.0.0
+   ```
+
+   On start it prints `MCP tools: calculate, get_current_time, subnet_info`. Because the MCP tool names match the inline ones, the MCP versions take over - the subnet starter still answers, now served by the MCP server, and the exchange appears in FortiAIGate's logs as before.
+
+Use a tool-calling model such as `ollama-qwen2.5-7b`; a reasoning model like `deepseek-r1` calls tools unreliably. To add new tools, add `@mcp.tool()` functions to `mcp_server.py` (or point the config at another MCP server); no agent change is needed. Retrieval (RAG) plugs in the same way, as a `search` tool, in the next step.
+
 ## Verification and troubleshooting
 
 The install is complete when every item below is ticked.
@@ -556,6 +593,9 @@ The install is complete when every item below is ticked.
 | A regex detector blocks every prompt, benign ones included | A pattern is matching all input — usually an empty pattern line (an empty regex matches everything) or an over-broad one such as `.*`. Open the detector, remove the blank/greedy pattern, and re-test in the Playground: a benign prompt should pass, the canary should block |
 | Ollama loads the model on the 3090 in Option A | Check the `CUDA_VISIBLE_DEVICES` UUID in the override, restart Ollama, and recheck with `ollama ps` |
 | A service is unhealthy | Main menu **5**, then **3. Show recent logs**, and enter the service name |
+| Agent prints `MCP tools: none` or an `MCP server error` line | The MCP server did not start. Check the printed error; usually the `command`/`args` path in the config is wrong (args are relative to where you launch the agent) or `mcp` is not installed in the venv |
+| MCP import error about `FastMCP` renamed to `MCPServer` | `mcp` 2.x is installed; this agent uses the v1 API. Reinstall with the pin: `~/faig-agent/bin/pip install "mcp>=1.2,<2"` |
+| A tool never fires, model answers in prose instead | Use a tool-calling model (`ollama-qwen2.5-7b`), confirm **Offer tools** is on, and check the model actually fits in VRAM with `ollama ps` |
 
 ## Open items
 
