@@ -610,6 +610,39 @@ All of this runs on the agent/Ollama host. Embeddings go straight to Ollama; onl
 
 To extend the index, drop more files in `rag_docs/` (or anywhere) and run `rag_ingest.py` again - no restart needed, since the server queries Qdrant live. Configuration (Ollama URL, Qdrant URL, collection name, chunk size, top-k) is in `rag_common.py` via `RAG_*` environment variables.
 
+## Step 12: Performance testing (load generator + host monitor)
+
+Two tools in `perf/` measure how FortiAIGate holds up under load. `faig_bench.py` drives concurrent queries and reports latency and throughput; `faig_monitor.py` samples CPU, memory and GPU on the FortiAIGate host while that runs. Because the LLM generation happens on Ollama and FortiAIGate's 3090 runs only the guardrail models, run the load **through the gateway** and **straight at Ollama** and compare - the difference is the gateway's inspection overhead, and the monitor shows where it lands.
+
+1. On the **FortiAIGate server**, start the monitor (stdlib only; `docker stats` may need `sudo`).
+
+   ```bash
+   python3 perf/faig_monitor.py --interval 2 --out faig_load.csv
+   ```
+
+   It prints a live line (host CPU, each GPU, the busiest FAIG containers) and writes a tidy CSV: `timestamp,source,cpu_pct,mem_used_mb,mem_total_mb` with a row per host, `gpuN`, and `faig-*` container.
+2. From the **agent side** (any host that can reach the gateway), drive load through FortiAIGate.
+
+   ```bash
+   FAIG_API_KEY=<key> FAIG_CA_CERT=~/faig-tls.crt \
+     ~/faig-agent/bin/python perf/faig_bench.py \
+     --base-url https://<faig-ip>/ai/openai/v1 --model ollama-qwen3.5-9b \
+     --concurrency 10 --requests 200 --max-tokens 128 --warmup 5 --stream
+   ```
+
+   It reports success rate, throughput (req/s), latency percentiles (p50/p90/p95/p99), time-to-first-token (with `--stream`), aggregate output tokens/s, and an error breakdown (gateway refusals show as `HTTP 4xx/<code>`). `--csv run.csv` and `--json summary.json` save the raw data.
+3. Repeat the same run **against Ollama directly** to isolate the gateway:
+
+   ```bash
+   ~/faig-agent/bin/python perf/faig_bench.py \
+     --base-url http://<ollama-ip>:11434/v1 --model qwen3.5:9b \
+     --concurrency 10 --requests 200 --max-tokens 128 --warmup 5 --stream
+   ```
+
+   The latency and throughput gap between the two runs is FortiAIGate's inspection cost; the monitor's CSV shows the matching CPU/GPU/memory the gateway spent.
+
+Use `--duration <seconds>` instead of `--requests` to hold a fixed concurrency for a set time, and raise `--concurrency` in steps to find where latency climbs or errors appear. Keep `--max-tokens` fixed across runs so reply length does not skew the comparison.
+
 ## Verification and troubleshooting
 
 The install is complete when every item below is ticked.
