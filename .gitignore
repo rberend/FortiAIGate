@@ -20,3 +20,8 @@ venv/
 
 # Live MCP config may hold server paths or secrets; keep only the example
 agent/mcp.config.json
+
+# RAG: local docs to index and the embedded Qdrant store (keep out of git)
+rag_docs/
+qdrant_storage/
+*.qdrant
