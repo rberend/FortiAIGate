@@ -57,10 +57,19 @@ DEFAULT_SYSTEM = (
     "You are a concise assistant for a network security lab. "
     "Use a tool when it gives a more reliable answer than you can give yourself. "
     "If a question needs current, recent, or external information and you are not "
-    "certain of the answer, call web_search (and web_fetch to read a result in "
-    "full) rather than guessing. Cite the source URLs you used."
+    "certain of the answer, call web_search rather than guessing. Answer from the "
+    "search snippets when they are enough; use web_fetch on at most two pages, and "
+    "if a fetched page has little useful text, do not fetch similar pages - answer "
+    "with what you have and say what you could not confirm. Cite the source URLs you used."
 )
-MAX_TOOL_STEPS = 6
+MAX_TOOL_STEPS = 8
+# Sent (not stored) when the tool budget runs out, so the turn ends with an
+# answer built from what the tools returned instead of an error.
+FINAL_ANSWER_NUDGE = (
+    "Stop calling tools now. Using only the tool results above, answer the user's "
+    "question as well as you can, cite the sources you used, and say plainly what "
+    "you could not find or confirm."
+)
 
 # Set by init_mcp_from_env() when FAIG_MCP_CONFIG points at an MCP config file.
 # While None, the agent uses only the inline tools below.
@@ -373,7 +382,18 @@ def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = 
             result = run_tool(name, arguments)
             yield {"type": "tool_result", "id": call["id"], "name": name, "arguments": arguments, "result": result}
             new.append({"role": "tool", "tool_call_id": call["id"], "content": result})
-    raise ToolLoopError(f"stopped after {MAX_TOOL_STEPS} tool steps without a final answer")
+
+    # Tool budget used up: one last request with tools withheld, asking the model
+    # to answer from what it gathered. The nudge itself is not kept in history.
+    yield {"type": "request", "number": MAX_TOOL_STEPS + 1}
+    complete = _stream_completion if stream else _single_completion
+    nudge = {"role": "user", "content": FINAL_ANSWER_NUDGE}
+    message = yield from complete(client, {"model": model, "messages": history + new + [nudge]})
+    message.pop("tool_calls", None)          # tools were not offered; ignore any anyway
+    if not (message.get("content") or "").strip():
+        raise ToolLoopError(f"stopped after {MAX_TOOL_STEPS} tool steps without a final answer")
+    new.append(message)
+    return new
 
 
 # --------------------------------------------------------------------------

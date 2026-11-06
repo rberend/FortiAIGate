@@ -699,7 +699,7 @@ Three files in `agent/` provide this, plus a SearXNG container:
 
    On start the MCP tools now include `web_fetch` and `web_search`. Ask something current ("what's the latest FortiOS release?"); the model should call `web_search`, optionally `web_fetch` a result, and cite the URLs - and the fetched text appears in FortiAIGate's logs. The default system prompt already nudges the model to search when it is unsure rather than guess; a custom system prompt saved in the console replaces that nudge.
 
-Configuration (SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
+Configuration (SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables, set in the server's `"env"` block. `web_fetch` returns at most 3000 characters by default (4000 hard cap) so a few pages do not overflow an 8K context. A turn may use up to 8 tool steps; if the model is still searching after that, the agent asks it for a final answer from what it has rather than failing. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
 
 ## Verification and troubleshooting
 
@@ -742,6 +742,7 @@ The install is complete when every item below is ticked.
 | SearXNG curl answers `{"error": "Not found."}` | Something else owns the port - on the agent box, the web console is on 8080. Use 8888 |
 | SearXNG returns `results: 0` with every engine `timeout`, then `Suspended: timeout` | Cold start, not the network: the first query after a start opens connections to every engine and times out, and SearXNG then suspends them briefly. Query two or three times. If it persists, confirm `outgoing.request_timeout` is in the container's settings (`docker exec searxng grep -A3 '^outgoing' /etc/searxng/settings.yml`) and test egress with `docker exec searxng wget -qO- -T 10 https://duckduckgo.com` |
 | An engine shows `CAPTCHA` or `too many requests` | DuckDuckGo and Brave throttle repeated automated queries. It clears on its own (Brave asks for 180 s); keep several engines enabled so the rest carry the load |
+| Agent says "stopped after N tool steps", or keeps searching without answering | Live results dashboards (AP, local news) are built by JavaScript, so `web_fetch` gets little text and the model keeps trying other sites. The agent now caps tool steps at 8 and then asks the model to answer from what it gathered; `web_fetch` flags script-built pages and caps page text at 4000 chars. If answers still drift off-topic after several fetches, the context window is full - raise Ollama's context (e.g. `OLLAMA_CONTEXT_LENGTH=16384`) if VRAM allows |
 | `web_fetch` returns `refusing to fetch: ... non-public address` | The URL resolves to a LAN/loopback address and the SSRF guard blocked it. Intended; set `WEB_FETCH_ALLOW_PRIVATE=1` only if you deliberately need internal fetches |
 
 ## Open items
