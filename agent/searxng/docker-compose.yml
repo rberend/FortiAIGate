@@ -1,0 +1,21 @@
+# SearXNG for the agent's web_search tool - run on the Ollama/agent server.
+#
+#   cd agent/searxng
+#   # put a random secret in settings.yml first (see that file's header), then:
+#   docker compose up -d
+#   curl -s 'http://localhost:8080/search?q=test&format=json' | head -c 200
+#
+# Bound to 127.0.0.1 only: SearXNG is reachable from the agent box itself (where
+# web_server.py runs) but not exposed on the LAN. Drop the 127.0.0.1 prefix only
+# if you deliberately want other hosts to reach it.
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+    restart: unless-stopped

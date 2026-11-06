@@ -1,0 +1,35 @@
+# Minimal SearXNG settings for the agent's web_search tool.
+#
+# IMPORTANT: set a unique secret below before first start:
+#   sed -i "s/CHANGE_ME_RANDOM_SECRET/$(openssl rand -hex 32)/" settings.yml
+#
+# The one setting that matters for the tool is search.formats including "json" -
+# SearXNG disables the JSON API by default, and web_search needs it (a 403 from
+# web_search almost always means this is missing).
+use_default_settings: true
+
+general:
+  instance_name: "lab-search"
+  # Keep query logging off; this instance is only for the agent.
+
+server:
+  secret_key: "CHANGE_ME_RANDOM_SECRET"
+  limiter: false          # no bot-limiter: the only client is the local agent
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json                # <-- required for web_search
+
+# Optional: trim to a few fast, snippet-friendly engines. Comment out to use
+# SearXNG's broad default set instead.
+engines:
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikipedia
+    disabled: false

@@ -3,3 +3,5 @@ mcp>=1.2,<2
 # RAG (Step 11): used only by rag_ingest.py / rag_server.py
 qdrant-client>=1.7
 pypdf>=4.0
+# Web search (Step 13): used by rag_common.py and web_server.py
+httpx>=0.27
