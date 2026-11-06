@@ -643,6 +643,50 @@ Two tools in `perf/` measure how FortiAIGate holds up under load. `faig_bench.py
 
 Use `--duration <seconds>` instead of `--requests` to hold a fixed concurrency for a set time, and raise `--concurrency` in steps to find where latency climbs or errors appear. Keep `--max-tokens` fixed across runs so reply length does not skew the comparison.
 
+> **Gotcha from the first gateway run.** Two things surfaced comparing a gateway run against the Ollama-direct baseline. First, with `--stream`, time-to-first-token equals total latency: the gateway buffers the whole response, runs output inspection on the complete text, then releases it, so streaming gives no early tokens through FortiAIGate - measure with `--stream` off. Second, watch the reported tokens-per-response: if the gateway run generates far more tokens than the direct run at the same `--max-tokens`, the cap is not reaching the upstream provider (check the Traffic Log for the outbound payload to Ollama) - that inflates latency and causes client timeouts, and it is a provider passthrough issue, not inspection cost. On throughput alone, inspection added roughly 20% in this lab (the FAIG host stayed near-idle; the 3090 only spiked briefly per request for the guardrail models).
+
+## Step 13: Give the model web search (agent machine)
+
+When an answer is not in the model's weights or the RAG index - recent events, current versions, prices - the model can reach the live web through one more MCP tool, so it rides the same path as Steps 10 and 11. A self-hosted **SearXNG** metasearch instance does the searching; the query building and logging stay on the agent box, and only the *results* travel back through FortiAIGate, so **the gateway inspects whatever the web returns** before it reaches the model.
+
+Three files in `agent/` provide this, plus a SearXNG container:
+
+| File | What it is |
+| --- | --- |
+| `web_server.py` | A FastMCP server exposing two tools: `web_search` (query SearXNG) and `web_fetch` (read one page's text). |
+| `searxng/docker-compose.yml` | SearXNG, bound to `127.0.0.1` so it is reachable only from the agent host. |
+| `searxng/settings.yml` | Minimal config; enables the JSON API (off by default) and sets a secret. |
+| `mcp.config.web.example.json` | A config that enables the lab tools, the RAG server and the web tools together. |
+
+`web_fetch` refuses URLs that resolve to private, loopback or link-local addresses, so the model cannot be steered into the Proxmox UI, the FortiAIGate admin, or anything else on the lab network. Override only if you must with `WEB_FETCH_ALLOW_PRIVATE=1`.
+
+1. Stand up SearXNG on the agent host.
+
+   ```bash
+   cd agent/searxng
+   sed -i "s/CHANGE_ME_RANDOM_SECRET/$(openssl rand -hex 32)/" settings.yml
+   docker compose up -d
+   # confirm the JSON API answers (empty or results - not a 403):
+   curl -s 'http://localhost:8080/search?q=test&format=json' | head -c 200; echo
+   cd ../..
+   ```
+2. Install the Python dependency (httpx; already present if Step 11 was done).
+
+   ```bash
+   ~/faig-agent/bin/pip install -r agent/requirements.txt
+   ```
+3. Enable the web server in the agent's MCP config and restart the agent.
+
+   ```bash
+   cp agent/mcp.config.web.example.json agent/mcp.config.json
+   export FAIG_MCP_CONFIG=agent/mcp.config.json
+   # relaunch faig_web.py as in Step 7
+   ```
+
+   On start it now prints `web_fetch` and `web_search` among the MCP tools. Ask something current ("what's the latest FortiOS release?"); the model should call `web_search`, optionally `web_fetch` a result, and cite the URLs - and the fetched text appears in FortiAIGate's logs. The default system prompt already nudges the model to search when it is unsure rather than guess.
+
+Configuration (SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
+
 ## Verification and troubleshooting
 
 The install is complete when every item below is ticked.
@@ -678,6 +722,9 @@ The install is complete when every item below is ticked.
 | A tool never fires, model answers in prose instead | Use a tool-calling model (`ollama-qwen2.5-7b` or `ollama-qwen3.5-9b`), confirm **Offer tools** is on, and check the model actually fits in VRAM with `ollama ps` |
 | `search_docs` returns `embedding failed` | Ollama is unreachable or the embedding model is missing. Check `RAG_OLLAMA_URL` and run `ollama pull nomic-embed-text` |
 | `search_docs` returns `search failed` or `no matches` | Qdrant is not running (`docker ps` for the `qdrant` container) or the index is empty - run `rag_ingest.py` and confirm it reports chunks upserted |
+| `web_search` returns `HTTP 403` | SearXNG's JSON API is disabled. Add `json` under `search.formats` in `searxng/settings.yml` and restart the container |
+| `web_search` returns `Is SearXNG running` | The container is down or `WEB_SEARXNG_URL` is wrong. Check `docker ps` for `searxng` and `curl http://localhost:8080/search?q=test&format=json` |
+| `web_fetch` returns `refusing to fetch: ... non-public address` | The URL resolves to a LAN/loopback address and the SSRF guard blocked it. Intended; set `WEB_FETCH_ALLOW_PRIVATE=1` only if you deliberately need internal fetches |
 
 ## Open items
 
