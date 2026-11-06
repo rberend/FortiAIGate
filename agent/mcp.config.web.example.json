@@ -10,7 +10,8 @@
     },
     "web-tools": {
       "command": "python",
-      "args": ["agent/web_server.py"]
+      "args": ["agent/web_server.py"],
+      "env": { "WEB_SEARXNG_URL": "http://localhost:8888" }
     }
   }
 }

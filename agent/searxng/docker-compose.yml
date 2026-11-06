@@ -1,21 +1,25 @@
 # SearXNG for the agent's web_search tool - run on the Ollama/agent server.
 #
-#   cd agent/searxng
-#   # put a random secret in settings.yml first (see that file's header), then:
-#   docker compose up -d
-#   curl -s 'http://localhost:8080/search?q=test&format=json' | head -c 200
+# Needs the Compose plugin (Ubuntu's docker.io does not include it):
+#   sudo apt install -y docker-compose-v2
+# Or skip Compose and use the equivalent `docker run` in runbook Step 13.
 #
-# Bound to 127.0.0.1 only: SearXNG is reachable from the agent box itself (where
-# web_server.py runs) but not exposed on the LAN. Drop the 127.0.0.1 prefix only
-# if you deliberately want other hosts to reach it.
+#   cd agent/searxng
+#   sed -i "s/CHANGE_ME_RANDOM_SECRET/$(openssl rand -hex 32)/" settings.yml
+#   sudo docker compose up -d
+#   curl -s 'http://localhost:8888/search?q=test&format=json' | head -c 200
+#
+# Port 8888, not 8080: the agent's web console (faig_web.py) already uses 8080.
+# Bound to 127.0.0.1: reachable from the agent box (where web_server.py runs)
+# but not exposed on the LAN.
 services:
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8888:8080"
     volumes:
-      - ./settings.yml:/etc/searxng/settings.yml:rw
+      - ./settings.yml:/etc/searxng/settings.yml
     environment:
-      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_BASE_URL=http://localhost:8888/
     restart: unless-stopped

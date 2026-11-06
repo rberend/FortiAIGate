@@ -654,36 +654,50 @@ Three files in `agent/` provide this, plus a SearXNG container:
 | File | What it is |
 | --- | --- |
 | `web_server.py` | A FastMCP server exposing two tools: `web_search` (query SearXNG) and `web_fetch` (read one page's text). |
-| `searxng/docker-compose.yml` | SearXNG, bound to `127.0.0.1` so it is reachable only from the agent host. |
-| `searxng/settings.yml` | Minimal config; enables the JSON API (off by default) and sets a secret. |
+| `searxng/docker-compose.yml` | SearXNG on port 8888, bound to `127.0.0.1` so it is reachable only from the agent host. |
+| `searxng/settings.yml` | Minimal config: enables the JSON API (off by default), sets a secret, raises the engine timeout, spreads queries across several engines and disables `google cse`. |
 | `mcp.config.web.example.json` | A config that enables the lab tools, the RAG server and the web tools together. |
 
 `web_fetch` refuses URLs that resolve to private, loopback or link-local addresses, so the model cannot be steered into the Proxmox UI, the FortiAIGate admin, or anything else on the lab network. Override only if you must with `WEB_FETCH_ALLOW_PRIVATE=1`.
 
-1. Stand up SearXNG on the agent host.
+1. Stand up SearXNG on the agent host, on port **8888** (the web console already holds 8080). Ubuntu's `docker.io` has no Compose plugin, so use `docker run` (or `sudo apt install -y docker-compose-v2` and `docker compose up -d` in `agent/searxng/`).
 
    ```bash
-   cd agent/searxng
-   sed -i "s/CHANGE_ME_RANDOM_SECRET/$(openssl rand -hex 32)/" settings.yml
-   docker compose up -d
-   # confirm the JSON API answers (empty or results - not a 403):
-   curl -s 'http://localhost:8080/search?q=test&format=json' | head -c 200; echo
-   cd ../..
+   cd ~/FortiAIGate
+   sed -i "s/CHANGE_ME_RANDOM_SECRET/$(openssl rand -hex 32)/" agent/searxng/settings.yml
+   sudo docker run -d --name searxng --restart unless-stopped \
+     -p 127.0.0.1:8888:8080 \
+     -v ~/FortiAIGate/agent/searxng/settings.yml:/etc/searxng/settings.yml \
+     -e SEARXNG_BASE_URL=http://localhost:8888/ \
+     searxng/searxng:latest
    ```
-2. Install the Python dependency (httpx; already present if Step 11 was done).
+2. Warm it up and confirm it returns results. **The first query after a start times out on every engine** while connections open, and SearXNG then briefly suspends those engines - so run this two or three times and judge the last one.
+
+   ```bash
+   for i in 1 2 3; do
+     curl -s 'http://localhost:8888/search?q=fortinet&format=json' \
+       | python3 -c "import sys,json; d=json.load(sys.stdin); print('results:',len(d['results']), d['unresponsive_engines'])"
+     sleep 3
+   done
+   ```
+
+   `results:` above 0 on the last run means it works. One or two engines listed as `CAPTCHA` or `too many requests` (DuckDuckGo and Brave, after repeated testing) is normal; the others carry the load.
+3. Install the Python dependency (httpx; already present if Step 11 was done).
 
    ```bash
    ~/faig-agent/bin/pip install -r agent/requirements.txt
    ```
-3. Enable the web server in the agent's MCP config and restart the agent.
+4. Enable the web server in the agent's MCP config and relaunch the agent **from `~/FortiAIGate`** (the config's paths are relative to it).
 
    ```bash
    cp agent/mcp.config.web.example.json agent/mcp.config.json
-   export FAIG_MCP_CONFIG=agent/mcp.config.json
-   # relaunch faig_web.py as in Step 7
+   FAIG_CA_CERT=~/faig-tls.crt FAIG_MCP_CONFIG=agent/mcp.config.json \
+     ~/faig-agent/bin/python agent/faig_web.py --host 0.0.0.0
    ```
 
-   On start it now prints `web_fetch` and `web_search` among the MCP tools. Ask something current ("what's the latest FortiOS release?"); the model should call `web_search`, optionally `web_fetch` a result, and cite the URLs - and the fetched text appears in FortiAIGate's logs. The default system prompt already nudges the model to search when it is unsure rather than guess.
+   The SearXNG URL lives in the `web-tools` entry's `"env"` block in `mcp.config.json`. Setting it with `export` does not work: the agent starts MCP servers over stdio with a minimal environment, so shell variables never reach them.
+
+   On start the MCP tools now include `web_fetch` and `web_search`. Ask something current ("what's the latest FortiOS release?"); the model should call `web_search`, optionally `web_fetch` a result, and cite the URLs - and the fetched text appears in FortiAIGate's logs. The default system prompt already nudges the model to search when it is unsure rather than guess; a custom system prompt saved in the console replaces that nudge.
 
 Configuration (SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
 
@@ -723,7 +737,11 @@ The install is complete when every item below is ticked.
 | `search_docs` returns `embedding failed` | Ollama is unreachable or the embedding model is missing. Check `RAG_OLLAMA_URL` and run `ollama pull nomic-embed-text` |
 | `search_docs` returns `search failed` or `no matches` | Qdrant is not running (`docker ps` for the `qdrant` container) or the index is empty - run `rag_ingest.py` and confirm it reports chunks upserted |
 | `web_search` returns `HTTP 403` | SearXNG's JSON API is disabled. Add `json` under `search.formats` in `searxng/settings.yml` and restart the container |
-| `web_search` returns `Is SearXNG running` | The container is down or `WEB_SEARXNG_URL` is wrong. Check `docker ps` for `searxng` and `curl http://localhost:8080/search?q=test&format=json` |
+| `web_search` returns `Is SearXNG running` | The container is down or `WEB_SEARXNG_URL` is wrong. Check `docker ps` for `searxng` and `curl 'http://localhost:8888/search?q=test&format=json'`. Set the URL in the `"env"` block of `mcp.config.json`, not with `export` |
+| `docker compose up -d` fails with `unknown shorthand flag: 'd'` | The Compose plugin is not installed (`docker.io` lacks it). Use the `docker run` in Step 13, or `sudo apt install -y docker-compose-v2` |
+| SearXNG curl answers `{"error": "Not found."}` | Something else owns the port - on the agent box, the web console is on 8080. Use 8888 |
+| SearXNG returns `results: 0` with every engine `timeout`, then `Suspended: timeout` | Cold start, not the network: the first query after a start opens connections to every engine and times out, and SearXNG then suspends them briefly. Query two or three times. If it persists, confirm `outgoing.request_timeout` is in the container's settings (`docker exec searxng grep -A3 '^outgoing' /etc/searxng/settings.yml`) and test egress with `docker exec searxng wget -qO- -T 10 https://duckduckgo.com` |
+| An engine shows `CAPTCHA` or `too many requests` | DuckDuckGo and Brave throttle repeated automated queries. It clears on its own (Brave asks for 180 s); keep several engines enabled so the rest carry the load |
 | `web_fetch` returns `refusing to fetch: ... non-public address` | The URL resolves to a LAN/loopback address and the SSRF guard blocked it. Intended; set `WEB_FETCH_ALLOW_PRIVATE=1` only if you deliberately need internal fetches |
 
 ## Open items

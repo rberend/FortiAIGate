@@ -10,7 +10,6 @@ use_default_settings: true
 
 general:
   instance_name: "lab-search"
-  # Keep query logging off; this instance is only for the agent.
 
 server:
   secret_key: "CHANGE_ME_RANDOM_SECRET"
@@ -24,12 +23,28 @@ search:
     - html
     - json                # <-- required for web_search
 
-# Optional: trim to a few fast, snippet-friendly engines. Comment out to use
-# SearXNG's broad default set instead.
+# The 3 s default is too tight: the first query after a (re)start opens fresh
+# connections to every engine and times out across the board otherwise.
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+
+# Spread queries over several engines so one that CAPTCHAs or rate-limits you
+# (DuckDuckGo and Brave both do under repeated testing) doesn't leave you with
+# nothing. "google cse" is a default engine that needs its own setup and only
+# times out, so it is turned off.
 engines:
+  - name: bing
+    disabled: false
   - name: duckduckgo
     disabled: false
   - name: brave
     disabled: false
+  - name: mojeek
+    disabled: false
+  - name: startpage
+    disabled: false
   - name: wikipedia
     disabled: false
+  - name: google cse
+    disabled: true
