@@ -15,10 +15,12 @@ the model's context.
 
 Run it directly to smoke-test, or let the agent launch it over stdio via
 FAIG_MCP_CONFIG (see mcp.config.web.example.json). Stand SearXNG up first
-(agent/searxng/) and point WEB_SEARXNG_URL at it.
+(agent/searxng/) and point WEB_SEARXNG_URL at it. Set it in the server's "env"
+block in mcp.config.json: the agent starts MCP servers over stdio with a minimal
+environment, so a variable exported in your shell does not reach this process.
 
 Config (environment variables, all optional):
-    WEB_SEARXNG_URL         SearXNG base URL.            Default http://localhost:8080
+    WEB_SEARXNG_URL         SearXNG base URL.            Default http://localhost:8888
     WEB_TOP_K               Default results to return.   Default 5
     WEB_TIMEOUT             HTTP timeout in seconds.     Default 20
     WEB_FETCH_MAX_CHARS     Cap on page text returned.   Default 6000
@@ -40,7 +42,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise SystemExit("The 'mcp' package is missing. Install it with: pip install mcp") from exc
 
-SEARXNG_URL = os.environ.get("WEB_SEARXNG_URL", "http://localhost:8080").rstrip("/")
+SEARXNG_URL = os.environ.get("WEB_SEARXNG_URL", "http://localhost:8888").rstrip("/")
 TOP_K = int(os.environ.get("WEB_TOP_K", "5"))
 TIMEOUT = float(os.environ.get("WEB_TIMEOUT", "20"))
 FETCH_MAX_CHARS = int(os.environ.get("WEB_FETCH_MAX_CHARS", "6000"))
@@ -140,9 +142,29 @@ def web_search(query: str, k: int = TOP_K) -> dict:
             "url": item.get("url"),
             "snippet": (item.get("content") or "").strip(),
         })
-    if not results:
-        return {"query": query, "results": [], "note": "no web results"}
-    return {"query": query, "results": results}
+
+    # Direct answers and infoboxes (e.g. a Wikipedia summary) can arrive even
+    # when the ordinary result engines are rate-limited or timed out - keep them.
+    extras = []
+    for box in data.get("infoboxes") or []:
+        content = (box.get("content") or "").strip()
+        if content:
+            extras.append({"title": box.get("infobox"), "url": box.get("id"),
+                           "snippet": content})
+    for ans in data.get("answers") or []:
+        text = ans.get("answer") if isinstance(ans, dict) else ans
+        if text:
+            extras.append({"title": "answer",
+                           "url": ans.get("url") if isinstance(ans, dict) else None,
+                           "snippet": str(text).strip()})
+
+    out = {"query": query, "results": results}
+    if extras:
+        out["infoboxes_and_answers"] = extras[:3]
+    if not results and not extras:
+        down = [e[0] for e in data.get("unresponsive_engines") or []]
+        out["note"] = "no web results" + (f"; unresponsive engines: {', '.join(down)}" if down else "")
+    return out
 
 
 @mcp.tool()
