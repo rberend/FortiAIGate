@@ -23,7 +23,7 @@ Config (environment variables, all optional):
     WEB_SEARXNG_URL         SearXNG base URL.            Default http://localhost:8888
     WEB_TOP_K               Default results to return.   Default 5
     WEB_TIMEOUT             HTTP timeout in seconds.     Default 20
-    WEB_FETCH_MAX_CHARS     Cap on page text returned.   Default 6000
+    WEB_FETCH_MAX_CHARS     Cap on page text returned.   Default 3000
     WEB_FETCH_ALLOW_PRIVATE Allow private/loopback URLs. Default 0 (blocked)
     WEB_ENGINES             Restrict SearXNG engines, e.g. "duckduckgo,brave".
 """
@@ -45,7 +45,10 @@ except ImportError as exc:  # pragma: no cover
 SEARXNG_URL = os.environ.get("WEB_SEARXNG_URL", "http://localhost:8888").rstrip("/")
 TOP_K = int(os.environ.get("WEB_TOP_K", "5"))
 TIMEOUT = float(os.environ.get("WEB_TIMEOUT", "20"))
-FETCH_MAX_CHARS = int(os.environ.get("WEB_FETCH_MAX_CHARS", "6000"))
+FETCH_MAX_CHARS = int(os.environ.get("WEB_FETCH_MAX_CHARS", "3000"))
+# The model may ask for more, but a few large pages overflow an 8K context
+# and push the question itself out - so its request is capped here.
+FETCH_HARD_CAP = int(os.environ.get("WEB_FETCH_HARD_CAP", "4000"))
 ALLOW_PRIVATE = os.environ.get("WEB_FETCH_ALLOW_PRIVATE", "0") == "1"
 ENGINES = os.environ.get("WEB_ENGINES", "").strip()
 
@@ -201,13 +204,19 @@ def web_fetch(url: str, max_chars: int = FETCH_MAX_CHARS) -> dict:
                 "note": "not a text/HTML document; nothing extracted"}
 
     text = text.strip()
+    max_chars = max(500, min(int(max_chars), FETCH_HARD_CAP))
     truncated = len(text) > max_chars
-    return {
+    out = {
         "url": str(resp.url),
         "chars": len(text),
         "truncated": truncated,
         "text": text[:max_chars],
     }
+    if len(text) < 400:
+        out["note"] = ("very little text extracted - this page is probably built by "
+                       "JavaScript (common for live results dashboards). Answer from the "
+                       "search snippets instead of fetching similar pages.")
+    return out
 
 
 if __name__ == "__main__":
