@@ -349,6 +349,30 @@ def _stream_completion(client: OpenAI, kwargs: dict):
     return message
 
 
+def current_date_note(now: dt.datetime | None = None) -> str:
+    """A line telling the model today's date. Models only know their training
+    cutoff, so without this they treat recent events as still in the future."""
+    tz_name = os.environ.get("FAIG_TIMEZONE")
+    if now is None:
+        now = dt.datetime.now(ZoneInfo(tz_name)) if tz_name else dt.datetime.now().astimezone()
+    return (f"Today is {now.strftime('%A, %B %d, %Y')} ({now.strftime('%H:%M %Z')}). "
+            "Your training data ends well before this date: events after your training "
+            "cutoff have happened. Words like 'latest', 'recent' or 'this year' are relative "
+            "to today - when a question depends on them, search instead of assuming.")
+
+
+def with_current_date(history: list[dict]) -> list[dict]:
+    """Return a copy of history whose system message carries today's date.
+    Added fresh on every turn and never stored, so a long-running console stays current."""
+    note = current_date_note()
+    messages = [dict(m) for m in history]
+    if messages and messages[0].get("role") == "system":
+        messages[0]["content"] = f"{messages[0].get('content') or ''}\n\n{note}".strip()
+    else:
+        messages.insert(0, {"role": "system", "content": note})
+    return messages
+
+
 def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = True, tools: bool = True):
     """Run one user turn: call the model, run any tool calls, repeat until it answers.
 
@@ -363,6 +387,7 @@ def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = 
     messages to append to the history. Gateway and connection errors propagate
     as openai exceptions; nothing is added to the history in that case.
     """
+    history = with_current_date(history)
     new: list[dict] = []
     for number in range(1, MAX_TOOL_STEPS + 1):
         kwargs: dict = {"model": model, "messages": history + new}
