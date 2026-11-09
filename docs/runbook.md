@@ -1,16 +1,43 @@
 # FortiAIGate 8.0.2 + Ollama Lab Install Runbook
 
-Oct 9, 2026 · @Ray · updated Oct 20, 2026 with the first GPU deployment (Proxmox passthrough, license activation, first-apply recovery)
+Oct 9, 2026 · @Ray · updated Oct 20, 2026 with the first GPU deployment (Proxmox passthrough, license activation, first-apply recovery) · updated Nov 9, 2026 with MCP tools, RAG, web search, performance testing and context tuning
 
 ## Overview
 
-This runbook builds a lab chain in which an agent reaches a local LLM only through FortiAIGate: agent, then FortiAIGate 8.0.2, then Ollama. FortiAIGate is deployed with the Docker Compose CLI (`deploy-docker-compose.sh` 0.6.2), and Ollama serves `qwen2.5:7b`.
+This runbook builds a lab chain in which an agent reaches a local LLM only through FortiAIGate: agent, then FortiAIGate 8.0.2, then Ollama. FortiAIGate is deployed with the Docker Compose CLI (`deploy-docker-compose.sh` 0.6.2). The install steps use `qwen2.5:7b` as the example model; the running lab now defaults to `qwen3.5:9b`.
 
-Steps 1 to 9 run in order. Each step names the host it applies to, so the same runbook covers all three layouts below.
+Steps 1 to 9 install and connect the chain and run in order. Each step names the host it applies to, so the same runbook covers all three layouts below. Steps 10 to 13 extend the agent: tools over MCP, retrieval (RAG) over documentation, performance testing, and web search.
 
-## Lab as built
+## Current lab, 9 November 2026
 
-The lab is Option C on two VMs with no GPU. A chat request works end to end and the gateway logs it, but nothing is inspected, because security scanning is paused without a GPU.
+The lab runs Option B on two Proxmox VMs, each with its own GPU. Every model call, including each tool round-trip, goes through FortiAIGate and is inspected.
+
+```
+Browser ──▶ web agent (:8080) ──HTTPS 443──▶ FortiAIGate (RTX 3090 guardrails) ──HTTP 11434──▶ Ollama (RTX 2080 Super)
+                │
+                └─ tools run on the agent host: lab tools, search_docs (Qdrant), web_search / web_fetch (SearXNG)
+```
+
+| Item | Value |
+| --- | --- |
+| FortiAIGate server | 192.168.1.139; RTX 3090 passed through; FortiAIGate 8.0.2-build0055 with GPU inspection (vLLM + Triton hold about 21 GB) |
+| Ollama / agent server | 192.168.1.135; RTX 2080 Super passed through |
+| Gateway URL for the agent | `https://192.168.1.139/ai/openai/v1` |
+| Models | `qwen3.5:9b` (default, public name `ollama-qwen3.5-9b`), `qwen2.5:7b` (`ollama-qwen2.5-7b`); also pulled `gemma4:12b`, `deepseek-r1:7b`; `nomic-embed-text` for RAG embeddings |
+| Ollama settings | `OLLAMA_HOST=0.0.0.0:11434`, `OLLAMA_CONTEXT_LENGTH=16384`, `OLLAMA_KEEP_ALIVE=24h`; `qwen3.5:9b` uses about 6.8 GB of 8 GB, 100% GPU |
+| Agent | `faig_web.py` on port 8080, run in `tmux` from `~/FortiAIGate` with the `~/faig-agent` venv and `FAIG_MCP_CONFIG=agent/mcp.config.json` |
+| Model tools | `get_current_time`, `calculate`, `subnet_info` (lab-tools); `search_docs` (rag-docs); `web_search`, `web_fetch` (web-tools) |
+| Agent behaviour | Today's date added to the system prompt every turn; up to 8 tool steps, then a forced final answer; older tool results trimmed to fit the context; cut-off replies flagged |
+| RAG | Qdrant container on port 6333, collection `fortinet_docs`: FortiSIEM 7.6 docs plus added PDFs (Step 11) |
+| Web search | SearXNG container on `127.0.0.1:8888` (Step 13) |
+| Load test, concurrency 10 | Ollama direct: about 60 tokens/s aggregate. Through the gateway: about 20% lower throughput; replies are buffered for output inspection (Step 12) |
+| Driver | 580.178.04 in both guests |
+
+The two sections that follow record how the lab got here.
+
+## Lab as first built: Option C, 9 October 2026
+
+The lab started as Option C on two VMs with no GPU. A chat request works end to end and the gateway logs it, but nothing is inspected, because security scanning is paused without a GPU.
 
 | Item | Value on 9 October 2026 |
 | --- | --- |
@@ -315,8 +342,10 @@ Ollama serves `qwen2.5:7b`, a 4.7 GB model with tool-calling support and a 32K c
    ```ini
    [Service]
    Environment="OLLAMA_HOST=0.0.0.0:11434"
-   Environment="OLLAMA_CONTEXT_LENGTH=8192"
+   Environment="OLLAMA_CONTEXT_LENGTH=16384"
    ```
+
+   8192 is enough for plain chat, but once the agent has tools, RAG and web search (Steps 10 to 13), a turn with several searches fills it: Ollama's log shows `n_tokens = 8191, truncated = 1` and replies come back empty or cut off. On the 2080 Super, `qwen3.5:9b` at 16384 uses about 6.8 GB and stays 100% on the GPU. If `ollama ps` shows any CPU share after the change, use 12288.
 4. Option A only: add a third line that pins Ollama to the 2080 Super by its UUID from Step 2. Without it, Ollama can load the model onto the 3090 that FortiAIGate is using.
 
    ```ini
@@ -328,6 +357,8 @@ Ollama serves `qwen2.5:7b`, a 4.7 GB model with tool-calling support and a 32K c
    sudo systemctl restart ollama
    ollama pull qwen2.5:7b
    ```
+
+   The running lab now defaults to `qwen3.5:9b` (`ollama pull qwen3.5:9b`, about 6 GB at a 16K context), which handles multi-step tool use better. Register any model you pull as its own model in FortiAIGate (Step 6).
 6. Confirm the model answers on the OpenAI-compatible endpoint and runs on the intended card.
 
    ```bash
@@ -472,6 +503,19 @@ Two ready-made clients use these settings. Keep both files in one directory on t
    ```
 
 Both clients default to this lab's gateway URL and model; set `FAIG_BASE_URL` and `FAIG_MODEL` to change them. The virtual key stays in the server process and is never sent to the browser.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `FAIG_BASE_URL` | Gateway base URL | `https://192.168.1.139/ai/openai/v1` |
+| `FAIG_MODEL` | Public model name | `ollama-qwen3.5-9b` |
+| `FAIG_CA_CERT` | Gateway `tls.crt`, for its self-signed certificate | none |
+| `FAIG_API_KEY` | Virtual key; prompted without echo if unset | none |
+| `FAIG_MCP_CONFIG` | MCP config listing the tool servers (Steps 10, 11, 13) | none (inline tools only) |
+| `FAIG_TIMEZONE` | Time zone for the date line added to every turn | the agent host's zone |
+| `FAIG_TOOL_RESULT_KEEP` | Characters kept from older tool results in each request | 1500 |
+| `FAIG_FINAL_TOOL_RESULT_CHARS` | Characters kept from every tool result in the forced final answer | 1000 |
+
+Settings for the MCP tool servers themselves (such as `WEB_SEARXNG_URL`) go in the `"env"` block of that server in `mcp.config.json`: the agent starts them with a minimal environment, so variables exported in the shell do not reach them.
 
 The web console has no login, so anyone who can reach port 8080 can send prompts with the key. Without `--host 0.0.0.0` it listens only on 127.0.0.1. Limit the port to your workstation with `sudo ufw allow from <workstation-ip> to any port 8080 proto tcp`. If you run the console on the Ollama server, the `ufw enable` from Step 6 is default-deny inbound and blocks 8080 until you add that rule; the console will report it is listening while the browser still cannot reach it.
 
@@ -749,14 +793,16 @@ The install is complete when every item below is ticked.
 
 ## Open items
 
-Routing, logging and the test agent work. Enforcement does not, and it cannot in this lab as built. Six points remain open.
+As of 9 November 2026, routing, inspection, tool calls, RAG and web search all work through the gateway. These remain:
 
-- [ ] Get a GPU under FortiAIGate. Neither VM has one, so the policy cannot enforce. The options are a host with a supported NVIDIA card, a cloud instance with an A10 or L4, or asking the FortiAIGate product team whether an evaluation switch exists for CPU-only scanning.
-- [ ] Do not try to emulate a GPU. The DLP and natural-language detectors need real CUDA hardware, and the GPU count comes from the license reporters in the engine containers.
-- [ ] Replace the `lab-agent` test key with a fresh one; its value was shared during setup.
-- [ ] Fix the Organization name and External URL, and create the workspace and project in Step 9.
-- [ ] Confirm tool calls through the gateway with the web console's subnet prompt. A streamed reply has worked; tool calls are untested.
-- [ ] If a single 24 GB card is used later, confirm that Triton and vLLM both load on it and that the host has the 64 GB the CLI recommends.
+- [ ] Rotate the agent's virtual key; its value was shared during setup.
+- [ ] Find why `max_tokens` is not honored through the gateway: in the first gateway load test, replies ran about 8 times longer than the cap (Step 12). Check the Traffic Log for the outbound payload to Ollama.
+- [ ] Fix the Organization name and External URL, and create the workspace and project in Step 9, if not already done.
+- [ ] Optional: a larger or newer model. The newest Qwen models (`qwen3.6`: 27B, and 35B-A3B mixture-of-experts) need far more than the 2080 Super's 8 GB. Options are llama.cpp with MoE expert offload and about 32 GB of VM RAM, or a 24 GB card for Ollama. The lab stays on `qwen3.5:9b` for now.
+- [ ] Optional: show tool calls and keep a browsable history of agent-to-LLM exchanges in the web console.
+- [ ] If a single 24 GB card is used later (Option A), confirm that Triton and vLLM both load on it alongside Ollama and that the host has the 64 GB the CLI recommends.
+
+Resolved since the first build: a GPU under FortiAIGate (20 October; Appendix A), tool calls through the gateway (confirmed with qwen2.5 and qwen3.5), and empty or cut-off replies on multi-search questions (context raised to 16K and tool results trimmed). Do not try to emulate a GPU: the DLP and natural-language detectors need real CUDA hardware.
 
 ## Appendix A: GPU passthrough on Proxmox
 
