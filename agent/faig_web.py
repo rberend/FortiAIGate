@@ -422,6 +422,7 @@ pre { background: var(--code-bg); border-radius: 4px; padding: 0.6rem 0.75rem; o
 .problem { border-left: 3px solid var(--stop); padding: 0.1rem 0 0.1rem 0.7rem; margin: 0.6rem 0; }
 .problem p { margin: 0.2rem 0; overflow-wrap: anywhere; }
 .problem .note { color: var(--muted); font-size: 0.875rem; }
+.notice { border-left: 3px solid var(--tool); padding: 0.1rem 0 0.1rem 0.7rem; margin: 0.5rem 0; font-size: 0.875rem; }
 
 footer { background: var(--surface); border-top: 1px solid var(--rule); padding: 0.75rem 1.25rem 1rem; }
 .composer { max-width: 46rem; margin: 0 auto; display: flex; gap: 0.6rem; align-items: flex-end; }
@@ -614,6 +615,8 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
         view.tools[ev.id] = box;
         text = "";                       // any text before a tool call is replaced by the final answer
         view.reply.innerHTML = "";
+      } else if (ev.type === "notice") {
+        view.work.appendChild(el("p", "notice", ev.message));
       } else if (ev.type === "tool_result") {
         var target = view.tools[ev.id];
         if (target) target.appendChild(el("pre", "", pretty(ev.result)));

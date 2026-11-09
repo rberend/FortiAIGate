@@ -63,6 +63,17 @@ DEFAULT_SYSTEM = (
     "with what you have and say what you could not confirm. Cite the source URLs you used."
 )
 MAX_TOOL_STEPS = 8
+# Tool results are trimmed in what is *sent* (the stored history keeps them whole)
+# so a turn with several searches and page fetches still fits Ollama's context
+# window. Results from the most recent tool step stay whole; older ones, and all
+# of them in the final forced-answer request, are cut to these sizes.
+TOOL_RESULT_KEEP_CHARS = int(os.environ.get("FAIG_TOOL_RESULT_KEEP", "1500"))
+FINAL_TOOL_RESULT_CHARS = int(os.environ.get("FAIG_FINAL_TOOL_RESULT_CHARS", "1000"))
+CONTEXT_FULL_NOTICE = (
+    "The reply was cut off because the model's context window is full "
+    "(Ollama's OLLAMA_CONTEXT_LENGTH). Raise it if VRAM allows, or click Clear history "
+    "and ask again."
+)
 # Sent (not stored) when the tool budget runs out, so the turn ends with an
 # answer built from what the tools returned instead of an error.
 FINAL_ANSWER_NUDGE = (
@@ -290,6 +301,7 @@ def _tool_call_dict(call_id: str, name: str, arguments: str) -> dict:
 
 def _single_completion(client: OpenAI, kwargs: dict):
     response = client.chat.completions.create(**kwargs)
+    finish = response.choices[0].finish_reason
     choice = response.choices[0].message
     message: dict = {"role": "assistant", "content": choice.content or ""}
     if choice.content:
@@ -305,17 +317,20 @@ def _single_completion(client: OpenAI, kwargs: dict):
             "prompt_tokens": response.usage.prompt_tokens,
             "completion_tokens": response.usage.completion_tokens,
         }
-    return message
+    return message, finish
 
 
 def _stream_completion(client: OpenAI, kwargs: dict):
     text_parts: list[str] = []
     calls: dict[int, dict] = {}
+    finish = None
     stream = client.chat.completions.create(stream=True, **kwargs)
     try:
         for chunk in stream:
             if not chunk.choices:
                 continue
+            if chunk.choices[0].finish_reason:
+                finish = chunk.choices[0].finish_reason
             delta = chunk.choices[0].delta
             if delta is None:
                 continue
@@ -346,7 +361,7 @@ def _stream_completion(client: OpenAI, kwargs: dict):
             _tool_call_dict(slot["id"] or f"call_{key}", slot["name"], slot["arguments"])
             for key, slot in sorted(calls.items())
         ]
-    return message
+    return message, finish
 
 
 def current_date_note(now: dt.datetime | None = None) -> str:
@@ -373,6 +388,32 @@ def with_current_date(history: list[dict]) -> list[dict]:
     return messages
 
 
+def _trim(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n...[{len(text) - limit} more characters trimmed to fit the model's context]"
+
+
+def compact_for_request(messages: list[dict], final: bool = False) -> list[dict]:
+    """Copy of messages with tool results trimmed so the request fits the context window.
+
+    Tool results from the latest tool step are kept whole (the model is reading them
+    now) unless final is set; every other tool result is trimmed. The caller's list
+    and the stored history are not changed.
+    """
+    last_call = max((i for i, m in enumerate(messages)
+                     if m.get("role") == "assistant" and m.get("tool_calls")), default=-1)
+    out = []
+    for i, m in enumerate(messages):
+        if m.get("role") == "tool" and isinstance(m.get("content"), str):
+            if final:
+                m = dict(m, content=_trim(m["content"], FINAL_TOOL_RESULT_CHARS))
+            elif i < last_call:
+                m = dict(m, content=_trim(m["content"], TOOL_RESULT_KEEP_CHARS))
+        out.append(m)
+    return out
+
+
 def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = True, tools: bool = True):
     """Run one user turn: call the model, run any tool calls, repeat until it answers.
 
@@ -383,6 +424,7 @@ def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = 
         {"type": "tool_call", "id", "name", "arguments"}      the model asked for a tool
         {"type": "tool_result", "id", "name", "arguments", "result"}
         {"type": "usage", "prompt_tokens", "completion_tokens"}   non-streaming only
+        {"type": "notice", "level": "warn", "message": str}  e.g. the reply was cut off
     Its return value (StopIteration.value) is the list of new assistant and tool
     messages to append to the history. Gateway and connection errors propagate
     as openai exceptions; nothing is added to the history in that case.
@@ -390,12 +432,14 @@ def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = 
     history = with_current_date(history)
     new: list[dict] = []
     for number in range(1, MAX_TOOL_STEPS + 1):
-        kwargs: dict = {"model": model, "messages": history + new}
+        kwargs: dict = {"model": model, "messages": compact_for_request(history + new)}
         if tools:
             kwargs["tools"] = active_tool_schemas()
         yield {"type": "request", "number": number}
         complete = _stream_completion if stream else _single_completion
-        message = yield from complete(client, kwargs)
+        message, finish = yield from complete(client, kwargs)
+        if finish == "length":
+            yield {"type": "notice", "level": "warn", "message": CONTEXT_FULL_NOTICE}
         new.append(message)
         calls = message.get("tool_calls")
         if not calls:
@@ -413,9 +457,15 @@ def run_turn(client: OpenAI, model: str, history: list[dict], *, stream: bool = 
     yield {"type": "request", "number": MAX_TOOL_STEPS + 1}
     complete = _stream_completion if stream else _single_completion
     nudge = {"role": "user", "content": FINAL_ANSWER_NUDGE}
-    message = yield from complete(client, {"model": model, "messages": history + new + [nudge]})
+    message, finish = yield from complete(
+        client, {"model": model, "messages": compact_for_request(history + new, final=True) + [nudge]})
     message.pop("tool_calls", None)          # tools were not offered; ignore any anyway
+    if finish == "length":
+        yield {"type": "notice", "level": "warn", "message": CONTEXT_FULL_NOTICE}
     if not (message.get("content") or "").strip():
+        if finish == "length":
+            raise ToolLoopError("the model ran out of context before it could answer. "
+                                "Raise OLLAMA_CONTEXT_LENGTH or click Clear history and ask again")
         raise ToolLoopError(f"stopped after {MAX_TOOL_STEPS} tool steps without a final answer")
     new.append(message)
     return new
@@ -466,6 +516,8 @@ class Agent:
                     line_open = False
                 if kind == "tool_result":
                     print(f"  [tool] {event['name']}({event['arguments']}) -> {event['result']}")
+                elif kind == "notice":
+                    print(f"  [warn] {event['message']}")
                 elif kind == "usage" and self.verbose:
                     print(f"  [usage] prompt={event['prompt_tokens']} completion={event['completion_tokens']}")
             if line_open:
