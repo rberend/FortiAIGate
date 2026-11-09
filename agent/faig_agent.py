@@ -13,7 +13,7 @@ Setup (once):
     python3 -m venv ~/faig-agent && ~/faig-agent/bin/pip install openai
 
 Configuration (environment variables):
-    FAIG_BASE_URL   Gateway base URL.   Default: https://10.20.70.4/ai/openai/v1
+    FAIG_BASE_URL   Gateway base URL.   Default: https://192.168.1.139/ai/openai/v1
     FAIG_MODEL      Public model name.  Default: ollama-qwen3.5-9b
     FAIG_CA_CERT    Path to the gateway's tls.crt, for its self-signed certificate.
     FAIG_API_KEY    Virtual key. If unset, the agent prompts for it without echo.
@@ -21,6 +21,12 @@ Configuration (environment variables):
                     When set, the listed MCP servers' tools are offered too, and
                     an MCP tool replaces an inline tool of the same name. Needs
                     the 'mcp' package.
+    FAIG_TIMEZONE   IANA zone for the date line added to every turn
+                    (default: this host's local zone).
+    FAIG_TOOL_RESULT_KEEP         Characters kept from older tool results in
+                                  each request (default 1500).
+    FAIG_FINAL_TOOL_RESULT_CHARS  Characters kept from every tool result in the
+                                  forced final-answer request (default 1000).
 
 Run:
     ~/faig-agent/bin/python faig_agent.py                 # interactive chat
@@ -51,7 +57,7 @@ try:
 except ImportError:
     sys.exit("The 'openai' package is missing. Install it with: pip install openai")
 
-DEFAULT_BASE_URL = "https://10.20.70.4/ai/openai/v1"
+DEFAULT_BASE_URL = "https://192.168.1.139/ai/openai/v1"
 DEFAULT_MODEL = "ollama-qwen3.5-9b"
 DEFAULT_SYSTEM = (
     "You are a concise assistant for a network security lab. "

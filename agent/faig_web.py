@@ -13,7 +13,8 @@ Run:
     then open http://<this-server>:8080
 
 Configuration (environment variables, same as faig_agent.py):
-    FAIG_BASE_URL, FAIG_MODEL, FAIG_CA_CERT, FAIG_API_KEY, FAIG_MCP_CONFIG
+    FAIG_BASE_URL, FAIG_MODEL, FAIG_CA_CERT, FAIG_API_KEY, FAIG_MCP_CONFIG,
+    FAIG_TIMEZONE, FAIG_TOOL_RESULT_KEEP, FAIG_FINAL_TOOL_RESULT_CHARS
 
 The page has no login. Anyone who can reach the port can send prompts with
 your virtual key, so the default bind address is 127.0.0.1. Use --host 0.0.0.0

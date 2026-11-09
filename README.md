@@ -1,30 +1,50 @@
 # FortiAIGate 8.0.2 lab with Ollama
 
-A runbook and test tools for deploying FortiAIGate 8.0.2 in a lab and sending an AI agent's traffic through it to a local LLM served by Ollama.
+A runbook and tools for deploying FortiAIGate 8.0.2 in a lab and sending an AI agent's traffic through it to a local LLM served by Ollama, with tools, retrieval over documentation, and web search on the agent side.
 
 ```
-Agent ──HTTPS──▶ FortiAIGate 8.0.2 ──HTTP──▶ Ollama (qwen2.5:7b)
+Browser ──▶ web agent ──HTTPS──▶ FortiAIGate 8.0.2 ──HTTP──▶ Ollama (qwen3.5:9b)
+                │                 (GPU guardrails)
+                └─ tools: lab tools · search_docs (Qdrant RAG) · web_search / web_fetch (SearXNG)
 ```
 
-The agent never talks to the model directly. FortiAIGate routes, logs and, when a GPU is present, inspects every request and reply.
+The agent never talks to the model directly. FortiAIGate routes, logs and, with a GPU, inspects every request and reply. Tools run on the agent host, and their results reach the model only through the gateway, so retrieved documents and fetched web pages are inspected too.
 
 ## What's in this repository
 
 | Path | Contents |
 | --- | --- |
-| [`docs/runbook.md`](docs/runbook.md) | Install and configuration runbook, Steps 1 to 9 |
-| [`agent/faig_web.py`](agent/faig_web.py) | Web console that sends prompts through the gateway and shows what it decided |
-| [`agent/faig_agent.py`](agent/faig_agent.py) | Command-line agent, and the core the web console imports |
-| [`agent/requirements.txt`](agent/requirements.txt) | Python dependency for the agent |
+| [`docs/runbook.md`](docs/runbook.md) | Install and configuration runbook: Steps 1 to 9 build the chain; Steps 10 to 13 add MCP tools, RAG, performance testing and web search. Starts with the current lab's configuration |
+| [`agent/faig_web.py`](agent/faig_web.py) | Web console that sends prompts through the gateway and shows its verdict, timing and each tool call |
+| [`agent/faig_agent.py`](agent/faig_agent.py) | Command-line agent, and the core the web console imports (tool loop, date line, context trimming) |
+| [`agent/mcp_server.py`](agent/mcp_server.py) | MCP server for the lab tools: `get_current_time`, `calculate`, `subnet_info` |
+| [`agent/mcp_bridge.py`](agent/mcp_bridge.py) | MCP client that starts the tool servers and routes the model's tool calls to them |
+| [`agent/rag_ingest.py`](agent/rag_ingest.py), [`rag_server.py`](agent/rag_server.py), [`rag_common.py`](agent/rag_common.py) | RAG: index PDFs, Markdown, text and HTML into Qdrant; the `search_docs` tool |
+| [`agent/web_server.py`](agent/web_server.py), [`agent/searxng/`](agent/searxng) | Web search: `web_search` and `web_fetch` tools, and the self-hosted SearXNG container |
+| `agent/mcp.config.*.example.json` | Tool-server configs: lab tools only, plus RAG, plus web |
+| [`perf/`](perf) | Load generator (`faig_bench.py`) and gateway resource monitor (`faig_monitor.py`) |
+
+## The model's tools
+
+| Tool | What it does |
+| --- | --- |
+| `get_current_time` | Current date and time in any IANA time zone |
+| `calculate` | Exact arithmetic, parsed safely |
+| `subnet_info` | Network, mask, broadcast, host range and count for a CIDR |
+| `search_docs` | Semantic search of the indexed docs (FortiSIEM 7.6 plus anything added) |
+| `web_search` | Live web search through SearXNG |
+| `web_fetch` | Downloads one URL and returns its text; refuses private and loopback addresses |
+
+Around every turn the agent also adds today's date to the system prompt, allows up to 8 tool steps before forcing a final answer, trims older tool results so the request fits the model's context window, and flags a reply that was cut off because that window was full.
 
 ## What you need
 
-- FortiAIGate 8.0.2 (build 48) release images, the Docker Compose CLI (`deploy-docker-compose.sh`) and a FortiAIGate license. They are not in this repository; get them from your Fortinet SE.
+- FortiAIGate 8.0.2 release images, the Docker Compose CLI (`deploy-docker-compose.sh` 0.6.2 or newer) and a FortiAIGate license. They are not in this repository; get them from your Fortinet SE.
 - Ubuntu 22.04 or later.
 - 250 GB of storage, which leaves room for upgrades and logs.
-- 64 GB of RAM with a GPU, or 32 GB without one.
+- 64 GB of RAM with a GPU, or 32 GB without one (32 GB with a GPU runs, with a preflight warning).
 - One network interface and internet access, for FortiCare and Docker Hub.
-- A supported NVIDIA GPU for inspection. Without one, FortiAIGate routes and logs traffic but does not inspect it.
+- A supported NVIDIA GPU for inspection (compute capability 8.0 or higher, about 22 GB or more, such as an RTX 3090). Without one, FortiAIGate routes and logs traffic but does not inspect it.
 
 ## Deployment options
 
@@ -34,21 +54,23 @@ The agent never talks to the model directly. FortiAIGate routes, logs and, when 
 | B | Two Ubuntu hosts, each with a GPU: one runs FortiAIGate, the other Ollama | Yes |
 | C | No GPU: FortiAIGate and Ollama on one or two hosts | No; routing and logging only |
 
-The runbook uses an RTX 3090 and an RTX 2080 Super as its GPU examples. The lab it was written on is Option C: two Ubuntu 22.04 VMs on Proxmox.
+The lab started as Option C and now runs Option B: two Ubuntu VMs on Proxmox, with an RTX 3090 passed through to FortiAIGate and an RTX 2080 Super to Ollama.
 
-## Run the test agent
+## Run the web agent
 
-On a machine that can reach the gateway, after the gateway is set up (runbook Steps 1 to 6):
+On the agent host, after the gateway is set up (runbook Steps 1 to 6):
 
 ```bash
 sudo apt install -y python3-venv
 python3 -m venv ~/faig-agent
 ~/faig-agent/bin/pip install -r agent/requirements.txt
-FAIG_CA_CERT=~/faig-tls.crt ~/faig-agent/bin/python agent/faig_web.py --host 0.0.0.0
+cp agent/mcp.config.web.example.json agent/mcp.config.json     # optional: enable all tool servers
+FAIG_CA_CERT=~/faig-tls.crt FAIG_MCP_CONFIG=agent/mcp.config.json \
+  ~/faig-agent/bin/python agent/faig_web.py --host 0.0.0.0
 ```
 
-Paste the FortiAIGate virtual key when asked, then open `http://<agent-host>:8080`. Runbook Step 7 covers the gateway certificate, the settings and the command-line version.
+Run it from the repository root, inside `tmux` to keep it running. Paste the FortiAIGate virtual key when asked, then open `http://<agent-host>:8080`. Runbook Step 7 covers the gateway certificate and all agent settings; Steps 10, 11 and 13 set up the tool servers, Qdrant and SearXNG.
 
 ## Keep secrets out of this repository
 
-Never commit virtual keys, TLS keys, the FortiAIGate `.env` file, license files or recovery archives. The `.gitignore` excludes the common ones. The web console has no login, so limit port 8080 to trusted addresses.
+Never commit virtual keys, TLS keys, the FortiAIGate `.env` file, license files or recovery archives. The `.gitignore` excludes the common ones, plus the live `agent/mcp.config.json`, `rag_docs/` and `qdrant_storage/`. The web console has no login, so limit port 8080 to trusted addresses.
