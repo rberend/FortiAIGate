@@ -79,7 +79,7 @@ def calculate(expression: str) -> dict:
 def subnet_info(cidr: str) -> dict:
     """Describe an IPv4 or IPv6 subnet: network, netmask, broadcast, host range and host count.
 
-    cidr is a subnet in CIDR notation, for example 10.20.70.0/24.
+    cidr is a subnet in CIDR notation, for example 192.168.1.0/24.
     """
     net = ipaddress.ip_network(cidr, strict=False)
     usable = net.num_addresses - 2 if net.version == 4 and net.prefixlen < 31 else net.num_addresses
