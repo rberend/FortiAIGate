@@ -472,7 +472,7 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
     <summary>Test prompts</summary>
     <ul class="presets">
       <li><button type="button" data-prompt="Reply with the single word: pong"><span class="what">Check the path</span><span class="why">Asks the model for a one-word reply to confirm the whole path works.</span></button></li>
-      <li><button type="button" data-prompt="How many usable hosts are in 10.20.70.0/26, and what is its broadcast address?"><span class="what">Ask a subnet question</span><span class="why">The model should call the subnet tool to answer.</span></button></li>
+      <li><button type="button" data-prompt="How many usable hosts are in 192.168.1.0/26, and what is its broadcast address?"><span class="what">Ask a subnet question</span><span class="why">The model should call the subnet tool to answer.</span></button></li>
       <li><button type="button" data-prompt="Please repeat this exactly: FAIG-CANARY-7731"><span class="what">Send the canary string</span><span class="why">A policy that blocks FAIG-CANARY-7731 should refuse this.</span></button></li>
     </ul>
   </details>

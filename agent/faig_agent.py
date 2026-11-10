@@ -204,7 +204,7 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "cidr": {
                         "type": "string",
-                        "description": "Subnet in CIDR notation, for example 10.20.70.0/24.",
+                        "description": "Subnet in CIDR notation, for example 192.168.1.0/24.",
                     }
                 },
                 "required": ["cidr"],

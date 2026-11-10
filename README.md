@@ -42,19 +42,29 @@ Around every turn the agent also adds today's date to the system prompt, allows 
 - FortiAIGate 8.0.2 release images, the Docker Compose CLI (`deploy-docker-compose.sh` 0.6.2 or newer) and a FortiAIGate license. They are not in this repository; get them from your Fortinet SE.
 - Ubuntu 22.04 or later.
 - 250 GB of storage, which leaves room for upgrades and logs.
-- 64 GB of RAM with a GPU, or 32 GB without one (32 GB with a GPU runs, with a preflight warning).
+- 64 GB of RAM on the FortiAIGate host (32 GB runs, with a preflight warning).
 - One network interface and internet access, for FortiCare and Docker Hub.
-- A supported NVIDIA GPU for inspection (compute capability 8.0 or higher, about 22 GB or more, such as an RTX 3090). Without one, FortiAIGate routes and logs traffic but does not inspect it.
+- A supported NVIDIA GPU for FortiAIGate's inspection engines (compute capability 8.0 or higher, about 22 GB or more, such as an RTX 3090), and a second GPU for Ollama (8 GB runs a 9B model with a 16K context).
 
 ## Deployment options
 
-| Option | Layout | Inspection |
-| --- | --- | --- |
-| A | One Ubuntu host with GPUs runs FortiAIGate and Ollama | Yes |
-| B | Two Ubuntu hosts, each with a GPU: one runs FortiAIGate, the other Ollama | Yes |
-| C | No GPU: FortiAIGate and Ollama on one or two hosts | No; routing and logging only |
+| Option | Layout |
+| --- | --- |
+| A | One Ubuntu host with two GPUs runs FortiAIGate and Ollama |
+| B | Two Ubuntu hosts, each with a GPU: one runs FortiAIGate, the other Ollama |
 
-The lab started as Option C and now runs Option B: two Ubuntu VMs on Proxmox, with an RTX 3090 passed through to FortiAIGate and an RTX 2080 Super to Ollama.
+The lab runs Option B: two Ubuntu VMs on Proxmox, with an RTX 3090 passed through to FortiAIGate and an RTX 2080 Super to Ollama.
+
+## Models
+
+| Model | Role |
+| --- | --- |
+| `qwen3.5:9b` | Default chat and tool-calling model (public name `ollama-qwen3.5-9b`) |
+| `mimo-v2.6:latest` | Xiaomi MiMo-V2.6-Distill-Qwen-9B: `qwen3.5:9b` further trained for agent tool use; under evaluation as the next default |
+| `qwen2.5:7b` | The model the install steps use as their example |
+| `nomic-embed-text` | Embeddings for RAG |
+
+Both 9B models load at about 6 GB at a 16K context and run fully on the 8 GB RTX 2080 Super, one at a time.
 
 ## Run the web agent
 
