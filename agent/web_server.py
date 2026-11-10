@@ -26,12 +26,15 @@ Config (environment variables, all optional):
     WEB_FETCH_MAX_CHARS     Cap on page text returned.   Default 3000
     WEB_FETCH_ALLOW_PRIVATE Allow private/loopback URLs. Default 0 (blocked)
     WEB_ENGINES             Restrict SearXNG engines, e.g. "duckduckgo,brave".
+    WEB_SEARCH_RETRIES      Retries when every engine timed out.  Default 2
+    WEB_SEARCH_RETRY_DELAY  Seconds between those retries.        Default 3
 """
 from __future__ import annotations
 
 import ipaddress
 import os
 import socket
+import time
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
 
@@ -51,6 +54,8 @@ FETCH_MAX_CHARS = int(os.environ.get("WEB_FETCH_MAX_CHARS", "3000"))
 FETCH_HARD_CAP = int(os.environ.get("WEB_FETCH_HARD_CAP", "4000"))
 ALLOW_PRIVATE = os.environ.get("WEB_FETCH_ALLOW_PRIVATE", "0") == "1"
 ENGINES = os.environ.get("WEB_ENGINES", "").strip()
+SEARCH_RETRIES = int(os.environ.get("WEB_SEARCH_RETRIES", "2"))
+SEARCH_RETRY_DELAY = float(os.environ.get("WEB_SEARCH_RETRY_DELAY", "3"))
 
 # A plain, non-identifying User-Agent for outbound fetches.
 USER_AGENT = "Mozilla/5.0 (compatible; FortiAIGate-lab-agent)"
@@ -187,6 +192,21 @@ def _is_blocked_host(host: str) -> str | None:
 # Tools
 # --------------------------------------------------------------------------
 
+def _searx_query(params: dict) -> dict:
+    resp = httpx.get(f"{SEARXNG_URL}/search", params=params, timeout=TIMEOUT,
+                     headers={"User-Agent": USER_AGENT})
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _all_timed_out(data: dict) -> bool:
+    """True when no engine answered and every failure was a timeout or suspension."""
+    down = data.get("unresponsive_engines") or []
+    return bool(down) and all(
+        "timeout" in str(reason).lower() or "suspend" in str(reason).lower()
+        for _, reason in (e if len(e) == 2 else (e, "") for e in down))
+
+
 @mcp.tool()
 def web_search(query: str, k: int = TOP_K) -> dict:
     """Search the live web for current or external information via the lab's SearXNG.
@@ -208,10 +228,15 @@ def web_search(query: str, k: int = TOP_K) -> dict:
     if ENGINES:
         params["engines"] = ENGINES
     try:
-        resp = httpx.get(f"{SEARXNG_URL}/search", params=params, timeout=TIMEOUT,
-                         headers={"User-Agent": USER_AGENT})
-        resp.raise_for_status()
-        data = resp.json()
+        data = _searx_query(params)
+        # The first query after SearXNG has sat idle often times out on every
+        # engine while connections reopen, and SearXNG then briefly suspends
+        # them. A short pause and a retry usually returns real results.
+        for _ in range(SEARCH_RETRIES):
+            if data.get("results") or not _all_timed_out(data):
+                break
+            time.sleep(SEARCH_RETRY_DELAY)
+            data = _searx_query(params)
     except httpx.HTTPStatusError as exc:
         hint = " (is JSON output enabled in SearXNG settings.yml?)" if exc.response.status_code == 403 else ""
         return {"error": f"search failed: HTTP {exc.response.status_code}{hint}"}
