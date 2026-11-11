@@ -696,6 +696,23 @@ Three files in `agent/` provide this, plus a SearXNG container:
 
    On start the MCP tools now include `web_fetch` and `web_search`. Ask something current ("what's the latest FortiOS release?"); the model should call `web_search`, optionally `web_fetch` a result, and cite the URLs - and the fetched text appears in FortiAIGate's logs. The default system prompt already nudges the model to search when it is unsure rather than guess; a custom system prompt saved in the console replaces that nudge.
 
+### Optional: Tavily as the search backend
+
+SearXNG depends on free engines that throttle automated queries: in this lab DuckDuckGo answers with CAPTCHAs and Brave rate-limits, which leaves Bing alone, and general Bing results for incident questions are mostly definitions and home pages. A search API key fixes that. Tavily's free plan gives 1,000 searches a month with no card, and has a news topic and a publish-date filter.
+
+1. Sign up at tavily.com and copy the API key (`tvly-...`).
+2. Put it in the `web-tools` entry of `agent/mcp.config.json` (git ignores this file), then restart the agent:
+
+   ```json
+   "web-tools": {
+     "command": "python",
+     "args": ["agent/web_server.py"],
+     "env": { "WEB_SEARXNG_URL": "http://localhost:8888", "TAVILY_API_KEY": "tvly-..." }
+   }
+   ```
+
+With a key set, `web_search` uses Tavily and falls back to SearXNG if Tavily errors (bad key, rate or monthly limit) or finds nothing; each result says which backend answered. Queries about events (incident, breach, attack, leak, a year, and similar words) go to news search automatically, so the model does not have to set the flag itself. Each search uses one credit; an incident-list question can take ten or more. Search queries then go to Tavily, a third party, while the results still reach the model only through FortiAIGate. `WEB_SEARCH_BACKEND=searxng` turns Tavily off without removing the key.
+
 Configuration (SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables, set in the server's `"env"` block. `web_fetch` returns at most 3000 characters by default (4000 hard cap) so a few pages do not overflow an 8K context. A turn may use up to 8 tool steps; if the model is still searching after that, the agent asks it for a final answer from what it has rather than failing. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
 
 ## Verification and troubleshooting
