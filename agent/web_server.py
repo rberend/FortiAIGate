@@ -199,16 +199,32 @@ def _searx_query(params: dict) -> dict:
     return resp.json()
 
 
+def _searx_with_retry(params: dict) -> dict:
+    """Query SearXNG; on a cold start (every engine timed out) pause and retry."""
+    data = _searx_query(params)
+    for _ in range(SEARCH_RETRIES):
+        if data.get("results") or not _all_timed_out(data):
+            break
+        time.sleep(SEARCH_RETRY_DELAY)
+        data = _searx_query(params)
+    return data
+
+
 def _all_timed_out(data: dict) -> bool:
-    """True when no engine answered and every failure was a timeout or suspension."""
+    """True when no engine answered and every failure was a timeout.
+
+    Covers "timeout" and "Suspended: timeout" (the brief suspension SearXNG
+    applies after a cold-start timeout). Rate limits and CAPTCHAs, including
+    "Suspended: too many requests", do not clear in seconds and are not retried.
+    """
     down = data.get("unresponsive_engines") or []
     return bool(down) and all(
-        "timeout" in str(reason).lower() or "suspend" in str(reason).lower()
+        "timeout" in str(reason).lower()
         for _, reason in (e if len(e) == 2 else (e, "") for e in down))
 
 
 @mcp.tool()
-def web_search(query: str, k: int = TOP_K) -> dict:
+def web_search(query: str, k: int = TOP_K, news: bool = False, time_range: str = "") -> dict:
     """Search the live web for current or external information via the lab's SearXNG.
 
     Use this when the answer is not in your own knowledge or in the indexed
@@ -222,21 +238,29 @@ def web_search(query: str, k: int = TOP_K) -> dict:
     "vulnerability". Avoid quotes and full sentences. Search one topic per call.
     If results are generic, rephrase with different specific terms instead of
     repeating the same query.
+
+    Set news=true for anything that happened: incidents, breaches, attacks,
+    outages, lawsuits, releases, announcements. General web search ranks
+    definitions and home pages first; news search returns dated reports.
+    Set time_range to "day", "week", "month" or "year" to limit how old results
+    may be (for "the past 12 months", use "year").
     """
     k = max(1, min(int(k), 6))
     params = {"q": query, "format": "json"}
-    if ENGINES:
+    if news:
+        params["categories"] = "news"
+    tr = (time_range or "").strip().lower()
+    if tr in ("day", "week", "month", "year"):
+        params["time_range"] = tr
+    if ENGINES and not news:
         params["engines"] = ENGINES
     try:
-        data = _searx_query(params)
-        # The first query after SearXNG has sat idle often times out on every
-        # engine while connections reopen, and SearXNG then briefly suspends
-        # them. A short pause and a retry usually returns real results.
-        for _ in range(SEARCH_RETRIES):
-            if data.get("results") or not _all_timed_out(data):
-                break
-            time.sleep(SEARCH_RETRY_DELAY)
-            data = _searx_query(params)
+        data = _searx_with_retry(params)
+        if news and not data.get("results"):
+            # News engines down or empty: fall back to general web search.
+            params.pop("categories", None)
+            data = _searx_with_retry(params)
+            data["note_fallback"] = True
     except httpx.HTTPStatusError as exc:
         hint = " (is JSON output enabled in SearXNG settings.yml?)" if exc.response.status_code == 403 else ""
         return {"error": f"search failed: HTTP {exc.response.status_code}{hint}"}
@@ -272,7 +296,10 @@ def web_search(query: str, k: int = TOP_K) -> dict:
                            "url": ans.get("url") if isinstance(ans, dict) else None,
                            "snippet": str(text).strip()})
 
-    out = {"query": query, "results": results}
+    out = {"query": query, "mode": "news" if params.get("categories") == "news" else "web",
+           "results": results}
+    if data.get("note_fallback"):
+        out["fallback"] = "news search found nothing, so these are general web results"
     if extras:
         out["infoboxes_and_answers"] = extras[:3]
     if not results and not extras:
