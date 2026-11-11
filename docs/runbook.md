@@ -24,12 +24,12 @@ Browser ──▶ web agent (:8080) ──HTTPS 443──▶ FortiAIGate (RTX 30
 | Ollama / agent server | 192.168.1.135; RTX 2080 Super passed through |
 | Gateway URL for the agent | `https://192.168.1.139/ai/openai/v1` |
 | Models | `qwen3.5:9b` (default, public name `ollama-qwen3.5-9b`); `mimo-v2.6:latest` (Xiaomi MiMo-V2.6-Distill-Qwen-9B, under evaluation); `qwen2.5:7b` (`ollama-qwen2.5-7b`); also pulled `gemma4:12b`, `deepseek-r1:7b`; `nomic-embed-text` for RAG embeddings. Only one chat model fits on the 2080 Super at a time, so switching models waits a few seconds while Ollama swaps them |
-| Ollama settings | `OLLAMA_HOST=0.0.0.0:11434`, `OLLAMA_CONTEXT_LENGTH=16384`, `OLLAMA_KEEP_ALIVE=24h`; `qwen3.5:9b` and `mimo-v2.6:latest` each load at 6.0 GB, 100% GPU (about 6.8 GB of 8 GB in use) |
+| Ollama settings | `OLLAMA_HOST=0.0.0.0:11434`, `OLLAMA_CONTEXT_LENGTH=32768`, `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, `OLLAMA_KEEP_ALIVE=24h`; `mimo-v2.6:latest` loads at 6.2 GB, 100% GPU (about 6.9 GB of 8 GB in use). `nomic-embed-text` loads beside it, mostly on the CPU, which is fine for query embeddings |
 | Agent | `faig_web.py` on port 8080, run in `tmux` from `~/FortiAIGate` with the `~/faig-agent` venv and `FAIG_MCP_CONFIG=agent/mcp.config.json` |
 | Model tools | `get_current_time`, `calculate`, `subnet_info` (lab-tools); `search_docs` (rag-docs); `web_search`, `web_fetch` (web-tools) |
-| Agent behaviour | Today's date added to the system prompt every turn; up to 8 tool steps, then a forced final answer; older tool results trimmed to fit the context; cut-off replies flagged |
+| Agent behaviour | Today's date added to the system prompt every turn; up to 8 tool steps, then a forced final answer; older tool results trimmed to fit the context; cut-off replies flagged; event searches use news mode automatically; replies render tables, lists and links |
 | RAG | Qdrant container on port 6333, collection `fortinet_docs`: FortiSIEM 7.6 docs plus added PDFs (Step 11) |
-| Web search | SearXNG container on `127.0.0.1:8888` (Step 13) |
+| Web search | Tavily API (free plan, key in `agent/mcp.config.json`) with the SearXNG container on `127.0.0.1:8888` as fallback (Step 13) |
 | Load test, concurrency 10 | Ollama direct: about 60 tokens/s aggregate. Through the gateway: about 20% lower throughput; replies are buffered for output inspection (Step 12) |
 | Driver | 580.178.04 in both guests |
 
@@ -297,10 +297,12 @@ Ollama serves `qwen2.5:7b`, a 4.7 GB model with tool-calling support and a 32K c
    ```ini
    [Service]
    Environment="OLLAMA_HOST=0.0.0.0:11434"
-   Environment="OLLAMA_CONTEXT_LENGTH=16384"
+   Environment="OLLAMA_CONTEXT_LENGTH=32768"
+   Environment="OLLAMA_FLASH_ATTENTION=1"
+   Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
    ```
 
-   8192 is enough for plain chat, but once the agent has tools, RAG and web search (Steps 10 to 13), a turn with several searches fills it: Ollama's log shows `n_tokens = 8191, truncated = 1` and replies come back empty or cut off. On the 2080 Super, `qwen3.5:9b` at 16384 uses about 6.8 GB and stays 100% on the GPU. If `ollama ps` shows any CPU share after the change, use 12288.
+   8192 is enough for plain chat, but once the agent has tools, RAG and web search (Steps 10 to 13), a multi-search question fills it: Ollama's log shows `n_tokens = 8191, truncated = 1` and replies come back empty or cut off. 16384 fixed ordinary questions; a 25-row incident table with sources still overflowed it. At 32768 with the default 16-bit context cache the 9B model needed 7.3 GB and Ollama put 15% of it on the CPU. Flash attention plus the 8-bit context cache (`q8_0`) brings 32768 down to 6.2 GB, 100% GPU, with little quality loss. Check `ollama ps` after one question: it must read 100% GPU. If it shows a CPU share (for example if flash attention does not engage), remove the last two lines and use 24576.
 4. Option A only: add a third line that pins Ollama to the 2080 Super by its UUID from Step 2. Without it, Ollama can load the model onto the 3090 that FortiAIGate is using.
 
    ```ini
@@ -313,9 +315,9 @@ Ollama serves `qwen2.5:7b`, a 4.7 GB model with tool-calling support and a 32K c
    ollama pull qwen2.5:7b
    ```
 
-   The running lab now defaults to `qwen3.5:9b` (`ollama pull qwen3.5:9b`, about 6 GB at a 16K context), which handles multi-step tool use better. Register any model you pull as its own model in FortiAIGate (Step 6).
+   The running lab now defaults to `qwen3.5:9b` (`ollama pull qwen3.5:9b`, about 6.2 GB at a 32K context with the settings above), which handles multi-step tool use better. Register any model you pull as its own model in FortiAIGate (Step 6).
 
-   The lab is also evaluating `mimo-v2.6:latest` (`ollama pull mimo-v2.6:latest`, the same file as the `9b-q4_K_M` tag): Xiaomi's MiMo-V2.6-Distill-Qwen-9B, released in September 2026 under the MIT license. It is `qwen3.5:9b` further trained on agent tool-use, coding and security tasks, so it uses the same chat format and needs no agent changes. It also loads at 6.0 GB, 100% GPU at a 16K context. Xiaomi reports large gains on tool-use benchmarks over `qwen3.5:9b`; those figures are the vendor's own. It has a thinking mode, which spends context on hidden reasoning, so watch for the agent's context-full warning. Pull it from Ollama's own library, not a community re-upload.
+   The lab is also evaluating `mimo-v2.6:latest` (`ollama pull mimo-v2.6:latest`, the same file as the `9b-q4_K_M` tag): Xiaomi's MiMo-V2.6-Distill-Qwen-9B, released in September 2026 under the MIT license. It is `qwen3.5:9b` further trained on agent tool-use, coding and security tasks, so it uses the same chat format and needs no agent changes. It also loads at 6.2 GB, 100% GPU at a 32K context with the settings above. Xiaomi reports large gains on tool-use benchmarks over `qwen3.5:9b`; those figures are the vendor's own. It has a thinking mode, which spends context on hidden reasoning, so watch for the agent's context-full warning. Pull it from Ollama's own library, not a community re-upload.
 6. Confirm the model answers on the OpenAI-compatible endpoint and runs on the intended card.
 
    ```bash
@@ -474,7 +476,7 @@ The web console has no login, so anyone who can reach port 8080 can send prompts
 
 The console runs until Ctrl+C and stops when the SSH session closes; start it inside `tmux` to keep it running.
 
-Its starter prompts cover a one-word reply, a tool call and the canary string. Streaming and tools each have a switch, which isolates a failure to one of them.
+Replies are rendered as formatted text: headings, lists, links and tables, with wide tables using the full window width. Model output can carry text from the web, so the console escapes it and only turns http(s) URLs into links. Its starter prompts cover a one-word reply, a tool call and the canary string. Streaming and tools each have a switch, which isolates a failure to one of them.
 
 ## Step 8: Add a detector, a guardrail and a policy (FortiAIGate server WebUI)
 
@@ -713,7 +715,7 @@ SearXNG depends on free engines that throttle automated queries: in this lab Duc
 
 With a key set, `web_search` uses Tavily and falls back to SearXNG if Tavily errors (bad key, rate or monthly limit) or finds nothing; each result says which backend answered. Queries about events (incident, breach, attack, leak, a year, and similar words) go to news search automatically, so the model does not have to set the flag itself. Each search uses one credit; an incident-list question can take ten or more. Search queries then go to Tavily, a third party, while the results still reach the model only through FortiAIGate. `WEB_SEARCH_BACKEND=searxng` turns Tavily off without removing the key.
 
-Configuration (SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables, set in the server's `"env"` block. `web_fetch` returns at most 3000 characters by default (4000 hard cap) so a few pages do not overflow an 8K context. A turn may use up to 8 tool steps; if the model is still searching after that, the agent asks it for a final answer from what it has rather than failing. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
+Configuration (search backend, SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables, set in the server's `"env"` block. `web_fetch` returns at most 3000 characters by default (4000 hard cap) so a few pages do not overflow an 8K context. A turn may use up to 8 tool steps; if the model is still searching after that, the agent asks it for a final answer from what it has rather than failing. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
 
 ## Verification and troubleshooting
 
@@ -758,7 +760,7 @@ The install is complete when every item below is ticked.
 | Searches about incidents or events return "What is AI?" pages, home pages or definitions | General web search ranks definitions first. `web_search` has a news mode: the model sets `news=true` (and `time_range`: `day`, `week`, `month` or `year`) for incidents, breaches, attacks and other events, which uses SearXNG's news engines and returns dated reports, and falls back to general search if news finds nothing. Compare by hand with `&categories=news&time_range=year` on the SearXNG query |
 | Web answers say the searches found only generic pages, or a fetched page "returned the article shell" | Check result quality straight from SearXNG: `curl -s 'http://localhost:8888/search?q=hugging+face+security+incident&format=json' \| python3 -c "import sys,json; d=json.load(sys.stdin); [print(r['engine'], '\|', r['title'][:70]) for r in d['results'][:10]]; print(d['unresponsive_engines'])"`. If only weak engines answer, the others are CAPTCHA'd or rate-limited; they recover on their own. `web_fetch` drops menus and page chrome, reads the page's main content, and honours `#section` links, so a Wikipedia section can be read directly |
 | An engine shows `CAPTCHA` or `too many requests` | DuckDuckGo and Brave throttle repeated automated queries. It clears on its own (Brave asks for 180 s); keep several engines enabled so the rest carry the load |
-| A reply stops mid-sentence ("Based on my searches from...") or comes back empty after several searches | The conversation filled Ollama's context window. Confirm with `journalctl -u ollama --since "15 min ago" \| grep -i truncat` - `n_tokens = 8191, truncated = 1` means it hit the 8K ceiling. Raise `OLLAMA_CONTEXT_LENGTH` to 16384 in the Ollama override (check `ollama ps` still reads 100% GPU; use 12288 if not). The agent now flags a cut-off reply as "context window is full" and trims older tool results in what it sends (`FAIG_TOOL_RESULT_KEEP`, default 1500 chars; 1000 in the final forced-answer request) |
+| A reply stops mid-sentence ("Based on my searches from...") or comes back empty after several searches | The conversation filled Ollama's context window. Confirm with `journalctl -u ollama --since "15 min ago" \| grep -i truncat` - `n_tokens = 8191, truncated = 1` means it hit the 8K ceiling. Raise `OLLAMA_CONTEXT_LENGTH` in the Ollama override: 32768 with `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` fits a 9B model on the 2080 Super (Step 5). Check `ollama ps` still reads 100% GPU; if not, use 24576 without the cache setting). The agent now flags a cut-off reply as "context window is full" and trims older tool results in what it sends (`FAIG_TOOL_RESULT_KEEP`, default 1500 chars; 1000 in the final forced-answer request) |
 | The model treats a recent event as not having happened yet | Models only know their training cutoff. The agent now adds today's date to the system prompt on every turn (from the agent host's clock; set `FAIG_TIMEZONE=America/Denver` to pin a zone). Check the host clock with `timedatectl` if dates look wrong |
 | Agent says "stopped after N tool steps", or keeps searching without answering | Live results dashboards (AP, local news) are built by JavaScript, so `web_fetch` gets little text and the model keeps trying other sites. The agent now caps tool steps at 8 and then asks the model to answer from what it gathered; `web_fetch` flags script-built pages and caps page text at 4000 chars. If answers still drift off-topic after several fetches, the context window is full - raise Ollama's context (e.g. `OLLAMA_CONTEXT_LENGTH=16384`) if VRAM allows |
 | `web_fetch` returns `refusing to fetch: ... non-public address` | The URL resolves to a LAN/loopback address and the SSRF guard blocked it. Intended; set `WEB_FETCH_ALLOW_PRIVATE=1` only if you deliberately need internal fetches |
@@ -775,7 +777,7 @@ As of 9 November 2026, routing, inspection, tool calls, RAG and web search all w
 - [ ] Optional: show tool calls and keep a browsable history of agent-to-LLM exchanges in the web console.
 - [ ] If a single 24 GB card is used later (Option A), confirm that Triton and vLLM both load on it alongside Ollama and that the host has the 64 GB the CLI recommends.
 
-Resolved since the first build: a GPU under FortiAIGate (20 October; Appendix A), tool calls through the gateway (confirmed with qwen2.5 and qwen3.5), and empty or cut-off replies on multi-search questions (context raised to 16K and tool results trimmed). Do not try to emulate a GPU: the DLP and natural-language detectors need real CUDA hardware.
+Resolved since the first build: a GPU under FortiAIGate (20 October; Appendix A), tool calls through the gateway (confirmed with qwen2.5 and qwen3.5), and empty or cut-off replies on multi-search questions (context raised to 32K with an 8-bit cache, and tool results trimmed). Do not try to emulate a GPU: the DLP and natural-language detectors need real CUDA hardware.
 
 ## Appendix A: GPU passthrough on Proxmox
 
