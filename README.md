@@ -32,7 +32,7 @@ The agent never talks to the model directly. FortiAIGate routes, logs and, with 
 | `calculate` | Exact arithmetic, parsed safely |
 | `subnet_info` | Network, mask, broadcast, host range and count for a CIDR |
 | `search_docs` | Semantic search of the indexed docs (FortiSIEM 7.6 plus anything added) |
-| `web_search` | Live web search through SearXNG |
+| `web_search` | Live web and news search through Tavily (free API key) or the self-hosted SearXNG, with automatic fallback |
 | `web_fetch` | Downloads one URL and returns its text; refuses private and loopback addresses |
 
 Around every turn the agent also adds today's date to the system prompt, allows up to 8 tool steps before forcing a final answer, trims older tool results so the request fits the model's context window, and flags a reply that was cut off because that window was full.

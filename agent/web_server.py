@@ -28,11 +28,20 @@ Config (environment variables, all optional):
     WEB_ENGINES             Restrict SearXNG engines, e.g. "duckduckgo,brave".
     WEB_SEARCH_RETRIES      Retries when every engine timed out.  Default 2
     WEB_SEARCH_RETRY_DELAY  Seconds between those retries.        Default 3
+    WEB_SEARCH_BACKEND      auto | tavily | searxng.  Default auto: Tavily when
+                            TAVILY_API_KEY is set, SearXNG otherwise. Either way
+                            SearXNG is the fallback if Tavily fails or finds nothing.
+    TAVILY_API_KEY          Tavily key (tvly-...). Put it in this server's "env"
+                            block in mcp.config.json, which git ignores.
+
+With Tavily, search queries go to Tavily's API (a third party); the results
+still reach the model only through FortiAIGate.
 """
 from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import socket
 import time
 from html.parser import HTMLParser
@@ -56,6 +65,17 @@ ALLOW_PRIVATE = os.environ.get("WEB_FETCH_ALLOW_PRIVATE", "0") == "1"
 ENGINES = os.environ.get("WEB_ENGINES", "").strip()
 SEARCH_RETRIES = int(os.environ.get("WEB_SEARCH_RETRIES", "2"))
 SEARCH_RETRY_DELAY = float(os.environ.get("WEB_SEARCH_RETRY_DELAY", "3"))
+BACKEND = os.environ.get("WEB_SEARCH_BACKEND", "auto").strip().lower()
+TAVILY_KEY = os.environ.get("TAVILY_API_KEY", "").strip()
+TAVILY_URL = os.environ.get("TAVILY_URL", "https://api.tavily.com/search")
+
+# Words that mark a query about something that happened; such queries go to news
+# search unless the model says otherwise. General search ranks definitions and
+# home pages first, which is useless for incidents and events.
+_EVENT_WORDS = ("incident", "breach", "attack", "hack", "leak", "exploit", "outage",
+                "lawsuit", "ransomware", "vulnerab", "cve-", "escape", "compromis",
+                "stolen", "fraud", "announce", "launch", "released", "news", "latest",
+                "disclos", "fined", "bill", "post-mortem", "postmortem")
 
 # A plain, non-identifying User-Agent for outbound fetches.
 USER_AGENT = "Mozilla/5.0 (compatible; FortiAIGate-lab-agent)"
@@ -224,8 +244,45 @@ def _all_timed_out(data: dict) -> bool:
 
 
 @mcp.tool()
-def web_search(query: str, k: int = TOP_K, news: bool = False, time_range: str = "") -> dict:
-    """Search the live web for current or external information via the lab's SearXNG.
+def _looks_like_event(query: str) -> bool:
+    q = query.lower()
+    return any(w in q for w in _EVENT_WORDS) or bool(re.search(r"\b20\d\d\b", q))
+
+
+def _tavily_query(query: str, k: int, news: bool, time_range: str) -> dict:
+    """Search with Tavily and return the result in SearXNG's shape."""
+    body = {"query": query, "topic": "news" if news else "general", "max_results": k,
+            "search_depth": "basic", "include_published_date": True}
+    if time_range:
+        body["time_range"] = time_range
+    resp = httpx.post(TAVILY_URL, json=body, timeout=TIMEOUT,
+                      headers={"Authorization": f"Bearer {TAVILY_KEY}"})
+    resp.raise_for_status()
+    data = resp.json()
+    return {"results": [{"title": r.get("title"), "url": r.get("url"),
+                         "content": r.get("content"), "publishedDate": r.get("published_date")}
+                        for r in data.get("results") or []]}
+
+
+def _searx_search(query: str, news: bool, time_range: str) -> dict:
+    params = {"q": query, "format": "json"}
+    if news:
+        params["categories"] = "news"
+    if time_range:
+        params["time_range"] = time_range
+    if ENGINES and not news:
+        params["engines"] = ENGINES
+    data = _searx_with_retry(params)
+    if news and not data.get("results"):
+        params.pop("categories", None)               # news empty: general web instead
+        data = _searx_with_retry(params)
+        data["note_fallback"] = True
+    return data
+
+
+@mcp.tool()
+def web_search(query: str, k: int = TOP_K, news: bool | None = None, time_range: str = "") -> dict:
+    """Search the live web for current or external information.
 
     Use this when the answer is not in your own knowledge or in the indexed
     documentation - for recent events, current versions, prices, or anything
@@ -239,33 +296,45 @@ def web_search(query: str, k: int = TOP_K, news: bool = False, time_range: str =
     If results are generic, rephrase with different specific terms instead of
     repeating the same query.
 
-    Set news=true for anything that happened: incidents, breaches, attacks,
-    outages, lawsuits, releases, announcements. General web search ranks
-    definitions and home pages first; news search returns dated reports.
-    Set time_range to "day", "week", "month" or "year" to limit how old results
-    may be (for "the past 12 months", use "year").
+    news: true searches news for things that happened (incidents, breaches,
+    attacks, outages, releases). Leave it unset and queries that mention such
+    events, or a year, use news automatically; set false to force general search.
+    time_range: "day", "week", "month" or "year" limits how old results may be
+    (for "the past 12 months", use "year").
     """
     k = max(1, min(int(k), 6))
-    params = {"q": query, "format": "json"}
-    if news:
-        params["categories"] = "news"
+    use_news = _looks_like_event(query) if news is None else bool(news)
     tr = (time_range or "").strip().lower()
-    if tr in ("day", "week", "month", "year"):
-        params["time_range"] = tr
-    if ENGINES and not news:
-        params["engines"] = ENGINES
-    try:
-        data = _searx_with_retry(params)
-        if news and not data.get("results"):
-            # News engines down or empty: fall back to general web search.
-            params.pop("categories", None)
-            data = _searx_with_retry(params)
-            data["note_fallback"] = True
-    except httpx.HTTPStatusError as exc:
-        hint = " (is JSON output enabled in SearXNG settings.yml?)" if exc.response.status_code == 403 else ""
-        return {"error": f"search failed: HTTP {exc.response.status_code}{hint}"}
-    except Exception as exc:
-        return {"error": f"search failed ({type(exc).__name__}: {exc}). Is SearXNG running at {SEARXNG_URL}?"}
+    tr = tr if tr in ("day", "week", "month", "year") else ""
+
+    data, backend, notes = None, "searxng", []
+    if BACKEND == "tavily" or (BACKEND == "auto" and TAVILY_KEY):
+        if not TAVILY_KEY:
+            notes.append("WEB_SEARCH_BACKEND=tavily but TAVILY_API_KEY is not set; used SearXNG")
+        else:
+            try:
+                data = _tavily_query(query, k, use_news, tr)
+                if use_news and not data["results"]:
+                    data = _tavily_query(query, k, False, tr)
+                    data["note_fallback"] = True
+                backend = "tavily"
+                if not data["results"]:
+                    notes.append("Tavily found nothing; tried SearXNG")
+                    data = None
+            except httpx.HTTPStatusError as exc:
+                notes.append(f"Tavily unavailable (HTTP {exc.response.status_code}: key, rate or monthly limit); used SearXNG")
+            except Exception as exc:
+                notes.append(f"Tavily unavailable ({type(exc).__name__}); used SearXNG")
+    if data is None:
+        backend = "searxng"
+        try:
+            data = _searx_search(query, use_news, tr)
+        except httpx.HTTPStatusError as exc:
+            hint = " (is JSON output enabled in SearXNG settings.yml?)" if exc.response.status_code == 403 else ""
+            return {"error": f"search failed: HTTP {exc.response.status_code}{hint}", "notes": notes}
+        except Exception as exc:
+            return {"error": f"search failed ({type(exc).__name__}: {exc}). Is SearXNG running at {SEARXNG_URL}?",
+                    "notes": notes}
 
     results, seen = [], set()
     for item in data.get("results") or []:
@@ -296,10 +365,13 @@ def web_search(query: str, k: int = TOP_K, news: bool = False, time_range: str =
                            "url": ans.get("url") if isinstance(ans, dict) else None,
                            "snippet": str(text).strip()})
 
-    out = {"query": query, "mode": "news" if params.get("categories") == "news" else "web",
+    out = {"query": query, "backend": backend,
+           "mode": "web" if data.get("note_fallback") or not use_news else "news",
            "results": results}
     if data.get("note_fallback"):
         out["fallback"] = "news search found nothing, so these are general web results"
+    if notes:
+        out["notes"] = notes
     if extras:
         out["infoboxes_and_answers"] = extras[:3]
     if not results and not extras:
