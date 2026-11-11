@@ -426,13 +426,16 @@ pre { background: var(--code-bg); border-radius: 4px; padding: 0.6rem 0.75rem; o
 .reply .prose li { margin: 0.2rem 0; }
 .reply .prose hr { border: 0; border-top: 1px solid var(--rule); margin: 0.8rem 0; }
 .reply .prose a { color: var(--steel); }
-.reply .table-wrap { overflow-x: auto; margin: 0.6rem 0; }
-.reply table { border-collapse: collapse; font-size: 0.875rem; min-width: 100%; }
+/* Tables may be wider than the 46rem text column: centre them on the column and
+   let them use the window's width, scrolling only on very narrow screens. */
+.reply .table-wrap { overflow-x: auto; margin: 0.6rem 0; position: relative; left: 50%;
+  width: max(100%, min(76rem, calc(100vw - 4rem))); transform: translateX(-50%); }
+.reply table { border-collapse: collapse; font-size: 0.875rem; width: 100%; }
 .reply th, .reply td { border: 1px solid var(--rule); padding: 0.35rem 0.55rem; text-align: left; vertical-align: top; }
 .reply th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
-.reply td { overflow-wrap: break-word; min-width: 4.5rem; }
-.reply td:first-child { min-width: 9rem; }
-.reply td.url { overflow-wrap: anywhere; min-width: 8rem; }
+.reply td { overflow-wrap: break-word; min-width: 4rem; }
+.reply td:first-child { min-width: 8rem; }
+.reply td.url { overflow-wrap: anywhere; min-width: 7rem; }
 .reply td.short { white-space: nowrap; }
 .reply tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
 .reply .prose code { background: var(--code-bg); border-radius: 3px; padding: 0.05em 0.3em; }
