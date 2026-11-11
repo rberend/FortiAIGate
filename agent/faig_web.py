@@ -430,7 +430,9 @@ pre { background: var(--code-bg); border-radius: 4px; padding: 0.6rem 0.75rem; o
 .reply table { border-collapse: collapse; font-size: 0.875rem; min-width: 100%; }
 .reply th, .reply td { border: 1px solid var(--rule); padding: 0.35rem 0.55rem; text-align: left; vertical-align: top; }
 .reply th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
-.reply td { overflow-wrap: anywhere; }
+.reply td { overflow-wrap: break-word; min-width: 4.5rem; }
+.reply td:first-child { min-width: 9rem; }
+.reply td.url { overflow-wrap: anywhere; min-width: 8rem; }
 .reply td.short { white-space: nowrap; }
 .reply tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
 .reply .prose code { background: var(--code-bg); border-radius: 3px; padding: 0.05em 0.3em; }
@@ -553,7 +555,8 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
         rows.forEach(function (r) {
           h += "<tr>" + head.map(function (_, j) {
             var c = r[j] || "";
-            return (c.length <= 24 && !/https?:/.test(c) ? '<td class="short">' : "<td>") + inline(c) + "</td>";
+            var cls = /https?:\/\//.test(c) ? "url" : (c.length <= 24 ? "short" : "");
+            return (cls ? '<td class="' + cls + '">' : "<td>") + inline(c) + "</td>";
           }).join("") + "</tr>";
         });
         out.push(h + "</tbody></table></div>"); continue;
