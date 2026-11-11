@@ -243,7 +243,6 @@ def _all_timed_out(data: dict) -> bool:
         for _, reason in (e if len(e) == 2 else (e, "") for e in down))
 
 
-@mcp.tool()
 def _looks_like_event(query: str) -> bool:
     q = query.lower()
     return any(w in q for w in _EVENT_WORDS) or bool(re.search(r"\b20\d\d\b", q))
