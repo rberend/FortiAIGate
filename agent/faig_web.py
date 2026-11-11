@@ -418,7 +418,21 @@ details.tests .presets { max-height: 40vh; overflow-y: auto; }
 .tool summary b { color: var(--tool); font-weight: 600; }
 .tool pre { margin: 0.4rem 0 0.2rem; }
 pre { background: var(--code-bg); border-radius: 4px; padding: 0.6rem 0.75rem; overflow-x: auto; white-space: pre; }
-.reply .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.5rem 0; }
+.reply .prose { overflow-wrap: anywhere; margin: 0.5rem 0; }
+.reply .prose p { margin: 0.5rem 0; }
+.reply .prose h3, .reply .prose h4, .reply .prose h5, .reply .prose h6 { margin: 1rem 0 0.4rem; line-height: 1.3; }
+.reply .prose h3 { font-size: 1.15rem; } .reply .prose h4 { font-size: 1.05rem; } .reply .prose h5, .reply .prose h6 { font-size: 1rem; }
+.reply .prose ul, .reply .prose ol { margin: 0.4rem 0; padding-left: 1.4rem; }
+.reply .prose li { margin: 0.2rem 0; }
+.reply .prose hr { border: 0; border-top: 1px solid var(--rule); margin: 0.8rem 0; }
+.reply .prose a { color: var(--steel); }
+.reply .table-wrap { overflow-x: auto; margin: 0.6rem 0; }
+.reply table { border-collapse: collapse; font-size: 0.875rem; min-width: 100%; }
+.reply th, .reply td { border: 1px solid var(--rule); padding: 0.35rem 0.55rem; text-align: left; vertical-align: top; }
+.reply th { background: var(--code-bg); font-weight: 600; white-space: nowrap; }
+.reply td { overflow-wrap: anywhere; }
+.reply td.short { white-space: nowrap; }
+.reply tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--code-bg) 45%, transparent); }
 .reply .prose code { background: var(--code-bg); border-radius: 3px; padding: 0.05em 0.3em; }
 .problem { border-left: 3px solid var(--stop); padding: 0.1rem 0 0.1rem 0.7rem; margin: 0.6rem 0; }
 .problem p { margin: 0.2rem 0; overflow-wrap: anywhere; }
@@ -498,10 +512,69 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
+  // Inline markdown on already-escaped text: code, bold, italic, links, bare URLs.
+  // Only http(s) links are made clickable; everything else stays text.
   function inline(s) {
-    return esc(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    var codes = [];
+    var t = esc(s).replace(/`([^`\n]+)`/g, function (_, c) { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
+    t = t.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_, label, url) {
+      return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + "</a>";
+    });
+    t = t.replace(/(^|[\s(|])(https?:\/\/[^\s<|)]+[^\s<|).,;:!?'"])/g, function (_, pre, url) {
+      return pre + '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + "</a>";
+    });
+    t = t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+         .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>")
+         .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
+    return t.replace(/\u0000(\d+)\u0000/g, function (_, i) { return "<code>" + codes[+i] + "</code>"; });
   }
-  // Small renderer: fenced code, inline code and bold. Everything else stays plain text.
+  function cells(row) {
+    return row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return c.trim(); });
+  }
+  var TABLE_RULE = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+  // Block markdown: headings, tables, bullet and numbered lists, rules, paragraphs.
+  function blocks(text) {
+    var lines = text.split("\n"), out = [], para = [], i = 0;
+    function flush() { if (para.length) { out.push("<p>" + para.map(inline).join("<br>") + "</p>"); para = []; } }
+    while (i < lines.length) {
+      var line = lines[i], m;
+      if (!line.trim()) { flush(); i++; continue; }
+      if ((m = line.match(/^\s*(#{1,6})\s+(.*)$/))) {
+        flush(); var lvl = Math.min(m[1].length + 2, 6);
+        out.push("<h" + lvl + ">" + inline(m[2].replace(/\s#+\s*$/, "")) + "</h" + lvl + ">"); i++; continue;
+      }
+      if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); out.push("<hr>"); i++; continue; }
+      if (line.indexOf("|") >= 0 && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1])) {
+        flush();
+        var head = cells(line), rows = [];
+        i += 2;
+        while (i < lines.length && lines[i].indexOf("|") >= 0 && lines[i].trim()) { rows.push(cells(lines[i])); i++; }
+        var h = '<div class="table-wrap"><table><thead><tr>' + head.map(function (c) { return "<th>" + inline(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
+        rows.forEach(function (r) {
+          h += "<tr>" + head.map(function (_, j) {
+            var c = r[j] || "";
+            return (c.length <= 24 && !/https?:/.test(c) ? '<td class="short">' : "<td>") + inline(c) + "</td>";
+          }).join("") + "</tr>";
+        });
+        out.push(h + "</tbody></table></div>"); continue;
+      }
+      if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+        flush();
+        var ordered = /^\s*\d+[.)]\s+/.test(line), items = [];
+        var sameKind = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*+]\s+/;
+        while (i < lines.length && sameKind.test(lines[i])) {
+          var item = lines[i].replace(/^\s*([-*+]|\d+[.)])\s+/, ""); i++;
+          while (i < lines.length && lines[i].trim() && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) { item += " " + lines[i].trim(); i++; }
+          items.push("<li>" + inline(item) + "</li>");
+        }
+        out.push((ordered ? "<ol>" : "<ul>") + items.join("") + (ordered ? "</ol>" : "</ul>")); continue;
+      }
+      para.push(line); i++;
+    }
+    flush();
+    return out.join("");
+  }
+  // Fenced code blocks are kept verbatim; everything else goes through blocks().
   function render(text) {
     var html = "";
     text.split("```").forEach(function (part, i) {
@@ -510,7 +583,7 @@ footer { background: var(--surface); border-top: 1px solid var(--rule); padding:
         var body = nl >= 0 ? part.slice(nl + 1) : part;
         html += "<pre><code>" + esc(body.replace(/\n$/, "")) + "</code></pre>";
       } else if (part.trim()) {
-        html += '<div class="prose">' + inline(part.replace(/^\n+|\n+$/g, "")) + "</div>";
+        html += '<div class="prose">' + blocks(part.replace(/^\n+|\n+$/g, "")) + "</div>";
       }
     });
     return html;
