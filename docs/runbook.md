@@ -469,6 +469,8 @@ Both clients default to this lab's gateway URL and model; set `FAIG_BASE_URL` an
 | `FAIG_TIMEZONE` | Time zone for the date line added to every turn | the agent host's zone |
 | `FAIG_TOOL_RESULT_KEEP` | Characters kept from older tool results in each request | 1500 |
 | `FAIG_FINAL_TOOL_RESULT_CHARS` | Characters kept from every tool result in the forced final answer | 1000 |
+| `FAIG_DIRECT_URL` (`--direct-url`) | Enables the console's **Bypass gateway** toggle: Ollama's OpenAI URL, e.g. `http://localhost:11434/v1` | none (toggle hidden) |
+| `FAIG_DIRECT_MODEL` (`--direct-model`) | Default model on the direct route, in Ollama's own naming | `qwen3.5:9b` |
 
 Settings for the MCP tool servers themselves (such as `WEB_SEARXNG_URL`) go in the `"env"` block of that server in `mcp.config.json`: the agent starts them with a minimal environment, so variables exported in the shell do not reach them.
 
@@ -477,6 +479,10 @@ The web console has no login, so anyone who can reach port 8080 can send prompts
 The console runs until Ctrl+C and stops when the SSH session closes; start it inside `tmux` to keep it running.
 
 Replies are rendered as formatted text: headings, lists, links and tables, with wide tables using the full window width. Model output can carry text from the web, so the console escapes it and only turns http(s) URLs into links. Its starter prompts cover a one-word reply, a tool call and the canary string. Streaming and tools each have a switch, which isolates a failure to one of them.
+
+**Bypass toggle (comparison testing).** Start the console with `--direct-url http://localhost:11434/v1` and a **Bypass gateway** switch appears. With it on, prompts go straight to Ollama: a red banner says so, the model list switches to Ollama's own names (`qwen3.5:9b`, `mimo-v2.6:latest`), and each trace marks FortiAIGate as bypassed with "Not inspected or logged by FortiAIGate". Without `--direct-url` the switch is hidden and the server refuses direct requests. This works from the agent host because Ollama listens on localhost there; the Step 6 firewall still keeps every other machine off port 11434. Anyone who can open the console can use the bypass while it is enabled, so enable it only for testing.
+
+**Jailbreak and prompt-injection tests.** The Test prompts list has a second group of common attack patterns, each aimed at a harmless, checkable result: instruction override ("I have been PWNED"), system-prompt extraction, a DAN-style persona, fake developer mode, a Base64-encoded instruction and a split payload that both produce the canary `FAIG-CANARY-7731`, an indirect injection hidden in a pasted email (which also tries `web_fetch` on the FortiAIGate admin URL, refused by the SSRF guard), fiction framing, and a Spanish-language override. Run each with the bypass off and then on: the difference is what FortiAIGate's detectors and guardrails catch. Clear history between runs.
 
 ## Step 8: Add a detector, a guardrail and a policy (FortiAIGate server WebUI)
 

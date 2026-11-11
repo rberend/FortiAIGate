@@ -15,7 +15,7 @@ The agent never talks to the model directly. FortiAIGate routes, logs and, with 
 | Path | Contents |
 | --- | --- |
 | [`docs/runbook.md`](docs/runbook.md) | Install and configuration runbook: Steps 1 to 9 build the chain; Steps 10 to 13 add MCP tools, RAG, performance testing and web search. Starts with the current lab's configuration |
-| [`agent/faig_web.py`](agent/faig_web.py) | Web console that sends prompts through the gateway and shows its verdict, timing and each tool call; renders replies as formatted text, including tables, lists and links |
+| [`agent/faig_web.py`](agent/faig_web.py) | Web console that sends prompts through the gateway and shows its verdict, timing and each tool call; renders replies as formatted text, including tables, lists and links; optional bypass toggle and built-in jailbreak tests |
 | [`agent/faig_agent.py`](agent/faig_agent.py) | Command-line agent, and the core the web console imports (tool loop, date line, context trimming) |
 | [`agent/mcp_server.py`](agent/mcp_server.py) | MCP server for the lab tools: `get_current_time`, `calculate`, `subnet_info` |
 | [`agent/mcp_bridge.py`](agent/mcp_bridge.py) | MCP client that starts the tool servers and routes the model's tool calls to them |
@@ -80,7 +80,7 @@ FAIG_CA_CERT=~/faig-tls.crt FAIG_MCP_CONFIG=agent/mcp.config.json \
   ~/faig-agent/bin/python agent/faig_web.py --host 0.0.0.0
 ```
 
-Run it from the repository root, inside `tmux` to keep it running. Paste the FortiAIGate virtual key when asked, then open `http://<agent-host>:8080`. Runbook Step 7 covers the gateway certificate and all agent settings; Steps 10, 11 and 13 set up the tool servers, Qdrant, SearXNG and the optional Tavily key, which goes in `agent/mcp.config.json` (git ignores it).
+Add `--direct-url http://localhost:11434/v1` to show a **Bypass gateway** switch that sends prompts straight to Ollama for side-by-side comparison; the console's Test prompts include a set of jailbreak and prompt-injection checks to run both ways. Run it from the repository root, inside `tmux` to keep it running. Paste the FortiAIGate virtual key when asked, then open `http://<agent-host>:8080`. Runbook Step 7 covers the gateway certificate and all agent settings; Steps 10, 11 and 13 set up the tool servers, Qdrant, SearXNG and the optional Tavily key, which goes in `agent/mcp.config.json` (git ignores it).
 
 ## Keep secrets out of this repository
 
