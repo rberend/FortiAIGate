@@ -4,7 +4,7 @@
             {
                 "description": "FortiAIGate 8.0.2 AI gateway request logs (RFC 5424 syslog, structured data fortiaigate@8888, one record per request)",
                 "patterns": [
-                    "^(?<msg_body>.*fortiaigate@8888.*request_id=.*)$"
+                    "^(?<syslog_head>.*)[[]fortiaigate@8888[[:space:]]+(?<msg_body>.*request_id=.*)$"
                 ],
                 "type": "syslog"
             }
@@ -14,7 +14,7 @@
         "application": "Syslog",
         "author": "Fortinet",
         "category": "Fortinet Device",
-        "change_time": "2026-11-12 14:45:00",
+        "change_time": "2026-11-12 14:50:00",
         "name": "FortiAIGate 8.0.2 Log Parser",
         "version": "8.0.2"
     },
