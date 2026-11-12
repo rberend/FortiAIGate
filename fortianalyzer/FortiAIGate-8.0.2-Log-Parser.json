@@ -1,0 +1,360 @@
+{
+    "data_source": {
+        "matchers": [
+            {
+                "description": "FortiAIGate 8.0.2 AI gateway request logs (RFC 5424 syslog, structured data fortiaigate@8888, one record per request)",
+                "patterns": [
+                    "^(?<syslog_head>.*)[[]fortiaigate@8888[[:space:]]+(?<msg_body>.*request_id=.*)$"
+                ],
+                "type": "syslog"
+            }
+        ]
+    },
+    "header": {
+        "application": "Syslog",
+        "author": "Fortinet",
+        "category": "Fortinet Device",
+        "change_time": "2026-11-12 14:00:00",
+        "name": "FortiAIGate 8.0.2 Log Parser",
+        "version": "8.0.2"
+    },
+    "parser": {
+        "field_map": {
+            "app_cat": [
+                "v_model_group",
+                "v_call_type"
+            ],
+            "app_data": {
+                "organization_id": [
+                    "v_organization_id"
+                ],
+                "virtual_key_id": [
+                    "v_virtual_key_id"
+                ],
+                "key_source": [
+                    "v_key_source"
+                ],
+                "served_credential_id": [
+                    "v_served_credential_id"
+                ],
+                "policy_ids": [
+                    "v_policy_ids"
+                ],
+                "verdict": [
+                    "v_verdict"
+                ],
+                "outcome": [
+                    "v_outcome"
+                ],
+                "detector_id": [
+                    "v_detector_id"
+                ],
+                "detector_name": [
+                    "v_detector_name"
+                ],
+                "violation_detail": [
+                    "v_violation_detail"
+                ],
+                "cache_read_input_tokens": [
+                    "v_cache_read_tokens"
+                ],
+                "prompt_modified": [
+                    "v_prompt_modified"
+                ],
+                "response_modified": [
+                    "v_response_modified"
+                ],
+                "input_guard_start": [
+                    "v_input_guard_start"
+                ],
+                "input_guard_end": [
+                    "v_input_guard_end"
+                ],
+                "input_guard_ms": [
+                    "v_input_guard_ms"
+                ],
+                "output_guard_start": [
+                    "v_output_guard_start"
+                ],
+                "output_guard_end": [
+                    "v_output_guard_end"
+                ],
+                "output_guard_ms": [
+                    "v_output_guard_ms"
+                ],
+                "llm_sent_time": [
+                    "v_llm_sent_time"
+                ],
+                "llm_recv_time": [
+                    "v_llm_recv_time"
+                ],
+                "metadata": [
+                    "v_metadata"
+                ],
+                "log_version": [
+                    "v_log_version"
+                ],
+                "syslog_msgid": [
+                    "v_msgid"
+                ]
+            },
+            "app_name": [
+                "v_model"
+            ],
+            "app_proc": [
+                "v_mcp_tool"
+            ],
+            "app_ref": [
+                "v_llm_provider"
+            ],
+            "app_service": [
+                "v_request_path"
+            ],
+            "app_state": [
+                "v_status"
+            ],
+            "app_ver": [
+                "v_model_id"
+            ],
+            "data_sourceid": [
+                "data_sourceid"
+            ],
+            "data_sourcename": [
+                "data_sourcename"
+            ],
+            "data_sourcetype": [
+                "data_sourcetype"
+            ],
+            "data_timestamp": [
+                "data_timestamp"
+            ],
+            "dns_query": [
+                "v_system_prompt"
+            ],
+            "event_action": [
+                "v_action"
+            ],
+            "event_cat": [
+                "v_subtype"
+            ],
+            "event_count": [
+                "v_total_tokens"
+            ],
+            "event_duration": [
+                "v_total_duration_ms"
+            ],
+            "event_end_time": [
+                "v_end_time"
+            ],
+            "event_id": [
+                "v_msgid"
+            ],
+            "event_message": [
+                "v_prompt_original"
+            ],
+            "event_outcome": [
+                "v_outcome"
+            ],
+            "event_policy": [
+                "v_policy_ids"
+            ],
+            "event_profile": [
+                "v_organization_id"
+            ],
+            "event_rawmsg": [
+                "msg_body"
+            ],
+            "event_ref": [
+                "v_virtual_key_id"
+            ],
+            "event_resource_id": [
+                "v_detector_id"
+            ],
+            "event_severity": [
+                "v_level"
+            ],
+            "event_source": [
+                "threat_type"
+            ],
+            "event_start_time": [
+                "v_start_time"
+            ],
+            "event_status": [
+                "v_status"
+            ],
+            "event_subtype": [
+                "v_subtype"
+            ],
+            "event_tags": [
+                "v_call_type"
+            ],
+            "event_type": [
+                "v_type"
+            ],
+            "event_uuid": [
+                "v_request_id"
+            ],
+            "host_ip": [
+                "v_requester_ip"
+            ],
+            "host_name": [
+                "data_sourcename"
+            ],
+            "http_response_body": [
+                "v_response_original"
+            ],
+            "http_response_time": [
+                "v_llm_duration_ms"
+            ],
+            "http_url": [
+                "v_request_path"
+            ],
+            "logon_id": [
+                "v_session_id"
+            ],
+            "net_recvbytes": [
+                "v_completion_tokens"
+            ],
+            "net_sentbytes": [
+                "v_prompt_tokens"
+            ],
+            "net_sessionduration": [
+                "v_total_duration_ms"
+            ],
+            "net_sessionid": [
+                "v_session_id"
+            ],
+            "src_ip": [
+                "v_requester_ip"
+            ],
+            "threat_direction": [
+                "threat_direction"
+            ],
+            "threat_message": [
+                "threat_message"
+            ],
+            "threat_name": [
+                "threat_name"
+            ],
+            "threat_ref": [
+                "v_detector_id"
+            ],
+            "threat_score": [
+                "v_spend"
+            ],
+            "threat_type": [
+                "threat_type"
+            ],
+            "user_id": [
+                "v_virtual_key_id"
+            ],
+            "user_name": [
+                "v_user",
+                "v_key_source"
+            ]
+        },
+        "rules": {
+            "rule_1_clean": {
+                "description": "RFC 5424 escapes \" and ] inside structured-data values as \\\" and \\]. Turn them into ' and ] so match_logfmt does not end a value early.",
+                "actions": [
+                    "msg_body = replace(msg_body, \"\\\\\\\"\", \"'\")",
+                    "msg_body = replace(msg_body, \"\\\\]\", \"]\")"
+                ],
+                "trigger": {
+                    "condition_1": "${msg_body}.is_not_empty()",
+                    "expression": "${condition_1}"
+                }
+            },
+            "rule_2_parse": {
+                "description": "Parse the fortiaigate@8888 structured data (key=\"value\" pairs) and normalize.",
+                "actions": [
+                    "match_logfmt(msg_body)",
+                    "data_sourcetype     = \"FortiAIGate\"",
+                    "data_sourceid       = coalesce(${_device_id}, ${device_id}, ${devid})",
+                    "data_sourcename     = coalesce(${_devname}, ${devname})",
+                    "data_timestamp      = epoch_timestamp(coalesce(${_itime_t}, ${itime_t}))",
+                    "v_level             = coalesce(${_level}, ${level})",
+                    "v_type              = \"fortiaigate\"",
+                    "v_subtype           = \"ai-request\"",
+                    "v_msgid             = syslog_head.match(\"fortiaigate[[:space:]]+[^[:space:]]+[[:space:]]+([^[:space:]]+)[[:space:]]*$\")",
+                    "v_log_version       = ${_log_version}",
+                    "v_request_id        = ${_request_id}",
+                    "v_organization_id   = ${_organization_id}",
+                    "v_call_type         = ${_call_type}",
+                    "v_start_time        = ${_start_time}",
+                    "v_end_time          = ${_end_time}",
+                    "v_status            = ${_status}",
+                    "v_outcome           = ${_outcome}",
+                    "v_model             = ${_model}",
+                    "v_model_id          = ${_model_id}",
+                    "v_model_group       = ${_model_group}",
+                    "v_llm_provider      = ${_custom_llm_provider}",
+                    "v_served_credential_id = ${_served_credential_id}",
+                    "v_virtual_key_id    = ${_virtual_key_id}",
+                    "v_key_source        = ${_source}",
+                    "v_user              = ${_user}",
+                    "v_session_id        = ${_session_id}",
+                    "v_policy_ids        = ${_policy_ids}",
+                    "v_action            = ${_action}",
+                    "v_verdict           = ${_verdict}",
+                    "v_violation_detail  = ${_violation_detail}",
+                    "v_prompt_tokens     = ${_prompt_tokens}",
+                    "v_completion_tokens = ${_completion_tokens}",
+                    "v_total_tokens      = ${_total_tokens}",
+                    "v_cache_read_tokens = ${_cache_read_input_tokens}",
+                    "v_spend             = ${_spend}",
+                    "v_request_path      = ${_request_path}",
+                    "v_system_prompt     = ${_system_prompt}",
+                    "v_prompt_original   = ${_prompt_original}",
+                    "v_prompt_modified   = ${_prompt_modified}",
+                    "v_response_original = ${_response_original}",
+                    "v_response_modified = ${_response_modified}",
+                    "v_input_guard_start = ${_input_guard_start_time}",
+                    "v_input_guard_end   = ${_input_guard_end_time}",
+                    "v_input_guard_ms    = ${_input_guard_duration_ms}",
+                    "v_output_guard_start= ${_output_guard_start_time}",
+                    "v_output_guard_end  = ${_output_guard_end_time}",
+                    "v_output_guard_ms   = ${_output_guard_duration_ms}",
+                    "v_llm_sent_time     = ${_llm_request_sent_time}",
+                    "v_llm_recv_time     = ${_llm_response_received_time}",
+                    "v_total_duration_ms = ${_total_request_duration_ms}",
+                    "v_llm_duration_ms   = ${_llm_request_duration_ms}",
+                    "v_requester_ip      = ${_requester_ip_address}",
+                    "v_mcp_tool          = ${_mcp_namespaced_tool_name}",
+                    "v_metadata          = ${_metadata}"
+                ],
+                "trigger": {
+                    "condition_1": "${msg_body}.is_not_empty()",
+                    "expression": "${condition_1}"
+                }
+            },
+            "rule_3_allowed": {
+                "description": "Allowed requests carry no action field; record ALLOW so event_action is always set.",
+                "actions": [
+                    "v_action = \"ALLOW\""
+                ],
+                "trigger": {
+                    "condition_1": "v_action.is_empty()",
+                    "condition_2": "v_verdict.is_in(\"False\", \"false\")",
+                    "expression": "${condition_1} and ${condition_2}"
+                }
+            },
+            "rule_4_violation": {
+                "description": "On a violation, pull the first detector's name, type, direction and details out of violation_detail.",
+                "actions": [
+                    "threat_name      = v_violation_detail.match(\"'detector_name':[[:space:]]*'([^']+)'\")",
+                    "threat_type      = v_violation_detail.match(\"'detector_type':[[:space:]]*'([^']+)'\")",
+                    "threat_direction = v_violation_detail.match(\"'direction':[[:space:]]*'([^']+)'\")",
+                    "threat_message   = v_violation_detail.match(\"'details':[[:space:]]*'([^']+)'\")",
+                    "v_detector_id    = v_violation_detail.match(\"'detector_id':[[:space:]]*'([^']+)'\")",
+                    "v_detector_name  = threat_name"
+                ],
+                "trigger": {
+                    "condition_1": "v_verdict.is_in(\"True\", \"true\")",
+                    "condition_2": "v_violation_detail.is_not_empty()",
+                    "expression": "${condition_1} and ${condition_2}"
+                }
+            }
+        }
+    }
+}

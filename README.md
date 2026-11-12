@@ -23,6 +23,7 @@ The agent never talks to the model directly. FortiAIGate routes, logs and, with 
 | [`agent/web_server.py`](agent/web_server.py), [`agent/searxng/`](agent/searxng) | Web search: `web_search` (Tavily with an API key, the self-hosted SearXNG container as fallback) and `web_fetch` |
 | `agent/mcp.config.*.example.json` | Tool-server configs: lab tools only, plus RAG, plus web |
 | [`perf/`](perf) | Load generator (`faig_bench.py`) and gateway resource monitor (`faig_monitor.py`) |
+| [`fortianalyzer/`](fortianalyzer) | FortiAnalyzer 8.0.2 custom log parser for FortiAIGate's syslog request logs |
 
 ## The model's tools
 
