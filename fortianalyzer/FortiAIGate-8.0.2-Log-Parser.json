@@ -4,7 +4,7 @@
             {
                 "description": "FortiAIGate 8.0.2 AI gateway request logs (RFC 5424 syslog, structured data fortiaigate@8888, one record per request)",
                 "patterns": [
-                    "^(?<syslog_head>.*)[[]fortiaigate@8888[[:space:]]+(?<msg_body>.*request_id=.*)$"
+                    "^(?<msg_body>.*fortiaigate@8888.*request_id=.*)$"
                 ],
                 "type": "syslog"
             }
@@ -14,7 +14,7 @@
         "application": "Syslog",
         "author": "Fortinet",
         "category": "Fortinet Device",
-        "change_time": "2026-11-12 14:00:00",
+        "change_time": "2026-11-12 14:45:00",
         "name": "FortiAIGate 8.0.2 Log Parser",
         "version": "8.0.2"
     },
@@ -94,8 +94,8 @@
                 "log_version": [
                     "v_log_version"
                 ],
-                "syslog_msgid": [
-                    "v_msgid"
+                "detector_score": [
+                    "v_score"
                 ]
             },
             "app_name": [
@@ -147,7 +147,7 @@
                 "v_end_time"
             ],
             "event_id": [
-                "v_msgid"
+                "v_request_id"
             ],
             "event_message": [
                 "v_prompt_original"
@@ -240,6 +240,7 @@
                 "v_detector_id"
             ],
             "threat_score": [
+                "v_score",
                 "v_spend"
             ],
             "threat_type": [
@@ -254,29 +255,17 @@
             ]
         },
         "rules": {
-            "rule_1_clean": {
-                "description": "RFC 5424 escapes \" and ] inside structured-data values as \\\" and \\]. Turn them into ' and ] so match_logfmt does not end a value early.",
-                "actions": [
-                    "msg_body = replace(msg_body, \"\\\\\\\"\", \"'\")",
-                    "msg_body = replace(msg_body, \"\\\\]\", \"]\")"
-                ],
-                "trigger": {
-                    "condition_1": "${msg_body}.is_not_empty()",
-                    "expression": "${condition_1}"
-                }
-            },
             "rule_2_parse": {
                 "description": "Parse the fortiaigate@8888 structured data (key=\"value\" pairs) and normalize.",
                 "actions": [
                     "match_logfmt(msg_body)",
                     "data_sourcetype     = \"FortiAIGate\"",
-                    "data_sourceid       = coalesce(${_device_id}, ${device_id}, ${devid})",
+                    "data_sourceid       = coalesce(${_device_id}, ${device_id})",
                     "data_sourcename     = coalesce(${_devname}, ${devname})",
                     "data_timestamp      = epoch_timestamp(coalesce(${_itime_t}, ${itime_t}))",
                     "v_level             = coalesce(${_level}, ${level})",
                     "v_type              = \"fortiaigate\"",
                     "v_subtype           = \"ai-request\"",
-                    "v_msgid             = syslog_head.match(\"fortiaigate[[:space:]]+[^[:space:]]+[[:space:]]+([^[:space:]]+)[[:space:]]*$\")",
                     "v_log_version       = ${_log_version}",
                     "v_request_id        = ${_request_id}",
                     "v_organization_id   = ${_organization_id}",
@@ -347,7 +336,8 @@
                     "threat_direction = v_violation_detail.match(\"'direction':[[:space:]]*'([^']+)'\")",
                     "threat_message   = v_violation_detail.match(\"'details':[[:space:]]*'([^']+)'\")",
                     "v_detector_id    = v_violation_detail.match(\"'detector_id':[[:space:]]*'([^']+)'\")",
-                    "v_detector_name  = threat_name"
+                    "v_detector_name  = threat_name",
+                    "v_score          = v_violation_detail.match(\"'score':[[:space:]]*([0-9.]+)\")"
                 ],
                 "trigger": {
                     "condition_1": "v_verdict.is_in(\"True\", \"true\")",
