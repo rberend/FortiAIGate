@@ -14,10 +14,11 @@ Parsers written for earlier FortiAIGate builds, which matched `log_id=20100001` 
 
 ## What the parser does
 
-1. **Matches** syslog lines that contain the `fortiaigate@8888` structured-data element and a `request_id`.
-2. **Parses** the `key="value"` pairs with `match_logfmt` and normalizes them (table below).
-3. **Sets `event_action` to ALLOW** for allowed requests, which carry no `action` field.
-4. **On a violation** (`verdict` true), extracts the first detector's name, type, direction, details, ID and confidence score from `violation_detail` into the threat fields.
+1. **Reads the event time** from the RFC 5424 header (UTC) into `data_timestamp`, the same way Fortinet's reference parser does, and names the source `FortiAIGate`.
+2. **Matches** syslog lines that contain the `fortiaigate@8888` structured-data element and a `request_id`.
+3. **Parses** the `key="value"` pairs with `match_logfmt` and normalizes them (table below).
+4. **Sets `event_action` to ALLOW** for allowed requests, which carry no `action` field.
+5. **On a violation** (`verdict` true), extracts the first detector's name, type, direction, details, ID and confidence score from `violation_detail` into the threat fields.
 
 | Normalized field | FortiAIGate field |
 | --- | --- |
@@ -40,9 +41,14 @@ Parsers written for earlier FortiAIGate builds, which matched `log_id=20100001` 
 
 ## Import and check
 
-1. In FortiAnalyzer 8.0.2, open the log parsers page and import `FortiAIGate-8.0.2-Log-Parser.json` as a custom log parser.
-2. Make sure the FortiAIGate syslog device (shown as `SYSLOG-C0A8018B` for 192.168.1.139) is assigned to it. FortiAnalyzer assigns matching devices automatically once the pattern matches.
-3. Send a few requests, including the console's canary test, then in **Log View** filter on `Data Parser Name = FortiAIGate 8.0.2 Log Parser` and check that `event_action`, `threat_name` and `event_message` are filled.
+A parser can pass **Validate** and still never touch live logs: Validate runs the parser you pick against a pasted line, while live parsing needs the parser installed and the device assigned to it.
+
+1. Delete any earlier copy of this parser (same name), then import `FortiAIGate-8.0.2-Log-Parser.json` under **Incidents & Events > Log Parser > Log Parsers > More > Import**.
+2. **Install it.** An imported parser starts out disabled, listed under **Uninstalled Log Parsers**. Select it and click **Install** (on builds before 7.6.4, **Enable**). Its status must read Enabled.
+3. Check its place in the priority order (**Move Up**) so no broader parser is tried first.
+4. **Send new logs.** Assignment happens when a log arrives and matches the `data_source` pattern, not at import, so run a few requests through FortiAIGate after installing. A device that only sent logs before the parser existed was given the **Generic SYSLOG** parser; change it under **Assigned Parsers** (the application, `Syslog`, is the same).
+5. Confirm the syslog device (`SYSLOG-C0A8018B` for 192.168.1.139) is registered and authorized in **Device Manager**; the **Assigned Parsers** device list only offers registered devices.
+6. In **Log View > Logs > All**, filter on `Data Parser Name = FortiAIGate 8.0.2 Log Parser` and check that `event_action`, `threat_name` and `event_message` are filled, with the right time.
 
 ## Known limits
 
@@ -50,4 +56,4 @@ Parsers written for earlier FortiAIGate builds, which matched `log_id=20100001` 
 - **Only the first violation** is extracted into the threat fields; the full list stays in `app_data.violation_detail`.
 - **Very long prompts or replies** may exceed the syslog message size limit and arrive truncated; the record still parses up to the cut.
 
-The logic was checked offline against a real FortiAIGate record (the matcher, a logfmt split, and the violation extraction). The first FortiAnalyzer test showed the pattern matching; version 2 removes the two actions that stopped the rules.
+Version 4 (13 November 2026) aligns the parser with Fortinet's reference parser: the event time now comes from the syslog header with `to_timestamp`, where earlier versions used an `itime_t` variable that live logs do not carry (records then had no time and did not show in Log View); `data_sourceid` is left for FortiAnalyzer to fill from the device ID instead of FortiAIGate's own fields; and rule triggers use the plain `variable.is_not_empty()` form. The logic was checked offline against a real FortiAIGate record (the matcher, a logfmt split, and the violation extraction). The first FortiAnalyzer test showed the pattern matching; version 2 removes the two actions that stopped the rules.
