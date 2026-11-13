@@ -14,7 +14,7 @@
         "application": "Syslog",
         "author": "Fortinet",
         "category": "Fortinet Device",
-        "change_time": "2026-11-12 14:50:00",
+        "change_time": "2026-11-13 10:30:00",
         "name": "FortiAIGate 8.0.2 Log Parser",
         "version": "8.0.2"
     },
@@ -116,9 +116,7 @@
             "app_ver": [
                 "v_model_id"
             ],
-            "data_sourceid": [
-                "data_sourceid"
-            ],
+            "data_sourceid": [],
             "data_sourcename": [
                 "data_sourcename"
             ],
@@ -252,17 +250,27 @@
             "user_name": [
                 "v_user",
                 "v_key_source"
-            ]
+            ],
+            "data_sourceversion": []
         },
         "rules": {
+            "rule_1_header": {
+                "description": "Event time and host from the RFC 5424 header (ISO 8601, UTC).",
+                "actions": [
+                    "tmp_year, tmp_mon, tmp_day, tmp_hour, tmp_min, tmp_sec = syslog_head.match(\"([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])T([0-9][0-9]):([0-9][0-9]):([0-9][0-9])\")",
+                    "data_timestamp = to_timestamp(tmp_year, tmp_mon, tmp_day, tmp_hour, tmp_min, tmp_sec, \"GMT\")",
+                    "data_sourcename = \"FortiAIGate\""
+                ],
+                "trigger": {
+                    "condition_1": "syslog_head.is_not_empty()",
+                    "expression": "${condition_1}"
+                }
+            },
             "rule_2_parse": {
                 "description": "Parse the fortiaigate@8888 structured data (key=\"value\" pairs) and normalize.",
                 "actions": [
                     "match_logfmt(msg_body)",
                     "data_sourcetype     = \"FortiAIGate\"",
-                    "data_sourceid       = coalesce(${_device_id}, ${device_id})",
-                    "data_sourcename     = coalesce(${_devname}, ${devname})",
-                    "data_timestamp      = epoch_timestamp(coalesce(${_itime_t}, ${itime_t}))",
                     "v_level             = coalesce(${_level}, ${level})",
                     "v_type              = \"fortiaigate\"",
                     "v_subtype           = \"ai-request\"",
@@ -313,7 +321,7 @@
                     "v_metadata          = ${_metadata}"
                 ],
                 "trigger": {
-                    "condition_1": "${msg_body}.is_not_empty()",
+                    "condition_1": "msg_body.is_not_empty()",
                     "expression": "${condition_1}"
                 }
             },
