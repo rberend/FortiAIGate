@@ -3,8 +3,8 @@
 A runbook and tools for deploying FortiAIGate 8.0.2 in a lab and sending an AI agent's traffic through it to a local LLM served by Ollama, with tools, retrieval over documentation, and web search on the agent side.
 
 ```
-Browser ──▶ web agent ──HTTPS──▶ FortiAIGate 8.0.2 ──HTTP──▶ Ollama (qwen3.5:9b)
-                │                 (GPU guardrails)
+Browser ──▶ web agent ──HTTPS──▶ FortiAIGate 8.0.2 ──┬─HTTP──▶ Ollama (qwen3.5:9b)
+                │                 (GPU guardrails)    └─HTTPS─▶ OpenRouter (cloud models, optional)
                 └─ tools: lab tools · search_docs (Qdrant RAG) · web_search / web_fetch (Tavily, SearXNG fallback)
 ```
 
@@ -14,8 +14,8 @@ The agent never talks to the model directly. FortiAIGate routes, logs and, with 
 
 | Path | Contents |
 | --- | --- |
-| [`docs/runbook.md`](docs/runbook.md) | Install and configuration runbook: Steps 1 to 9 build the chain; Steps 10 to 13 add MCP tools, RAG, performance testing and web search. Starts with the current lab's configuration |
-| [`agent/faig_web.py`](agent/faig_web.py) | Web console that sends prompts through the gateway and shows its verdict, timing and each tool call; renders replies as formatted text, including tables, lists and links; optional bypass toggle and built-in jailbreak tests |
+| [`docs/runbook.md`](docs/runbook.md) | Install and configuration runbook: Steps 1 to 9 build the chain; Steps 10 to 13 add MCP tools, RAG, performance testing and web search; Step 14 adds OpenRouter cloud models. Starts with the current lab's configuration |
+| [`agent/faig_web.py`](agent/faig_web.py) | Web console that sends prompts through the gateway and shows its verdict, timing and each tool call; renders replies as formatted text, including tables, lists and links; optional bypass routes straight to Ollama or OpenRouter, and built-in jailbreak tests |
 | [`agent/faig_agent.py`](agent/faig_agent.py) | Command-line agent, and the core the web console imports (tool loop, date line, context trimming) |
 | [`agent/mcp_server.py`](agent/mcp_server.py) | MCP server for the lab tools: `get_current_time`, `calculate`, `subnet_info` |
 | [`agent/mcp_bridge.py`](agent/mcp_bridge.py) | MCP client that starts the tool servers and routes the model's tool calls to them |
@@ -46,6 +46,7 @@ Around every turn the agent also adds today's date to the system prompt, allows 
 - 64 GB of RAM on the FortiAIGate host (32 GB runs, with a preflight warning).
 - One network interface and internet access, for FortiCare and Docker Hub.
 - A supported NVIDIA GPU for FortiAIGate's inspection engines (compute capability 8.0 or higher, about 22 GB or more, such as an RTX 3090), and a second GPU for Ollama (8 GB runs a 9B model with a 32K context, using Ollama's 8-bit context cache).
+- Optional: an OpenRouter API key for cloud models (some models are free, with daily limits).
 - Optional: a free Tavily API key for reliable web and news search (1,000 searches a month, no card). Without one, search uses the self-hosted SearXNG.
 
 ## Deployment options
@@ -65,8 +66,9 @@ The lab runs Option B: two Ubuntu VMs on Proxmox, with an RTX 3090 passed throug
 | `mimo-v2.6:latest` | Xiaomi MiMo-V2.6-Distill-Qwen-9B: `qwen3.5:9b` further trained for agent tool use; under evaluation as the next default |
 | `qwen2.5:7b` | The model the install steps use as their example |
 | `nomic-embed-text` | Embeddings for RAG |
+| OpenRouter models | Optional cloud models (any that support tool calling, including free `:free` ones), added to FortiAIGate as a second provider |
 
-Both 9B models load at about 6.2 GB with a 32K context window (flash attention and an 8-bit context cache) and run fully on the 8 GB RTX 2080 Super, one at a time.
+Both 9B models load at about 6.2 GB with a 32K context window (flash attention and an 8-bit context cache) and run fully on the 8 GB RTX 2080 Super, one at a time. OpenRouter models run in the cloud, so prompts to them leave the lab after FortiAIGate has inspected them; runbook Step 14 covers the setup.
 
 ## Run the web agent
 
@@ -81,7 +83,7 @@ FAIG_CA_CERT=~/faig-tls.crt FAIG_MCP_CONFIG=agent/mcp.config.json \
   ~/faig-agent/bin/python agent/faig_web.py --host 0.0.0.0
 ```
 
-Add `--direct-url http://localhost:11434/v1` to show a **Bypass gateway** switch that sends prompts straight to Ollama for side-by-side comparison; the console's Test prompts include a set of jailbreak and prompt-injection checks to run both ways. Run it from the repository root, inside `tmux` to keep it running. Paste the FortiAIGate virtual key when asked, then open `http://<agent-host>:8080`. Runbook Step 7 covers the gateway certificate and all agent settings; Steps 10, 11 and 13 set up the tool servers, Qdrant, SearXNG and the optional Tavily key, which goes in `agent/mcp.config.json` (git ignores it).
+Add `--direct-url http://localhost:11434/v1` to show a **Route** list that can send prompts straight to Ollama for side-by-side comparison; with `OPENROUTER_API_KEY` set, the list also offers OpenRouter directly. The console's Test prompts include a set of jailbreak and prompt-injection checks to run both ways. Run it from the repository root, inside `tmux` to keep it running. Paste the FortiAIGate virtual key when asked, then open `http://<agent-host>:8080`. Runbook Step 7 covers the gateway certificate and all agent settings; Steps 10, 11 and 13 set up the tool servers, Qdrant, SearXNG and the optional Tavily key, which goes in `agent/mcp.config.json` (git ignores it).
 
 ## Keep secrets out of this repository
 

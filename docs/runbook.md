@@ -1,12 +1,12 @@
 # FortiAIGate 8.0.2 + Ollama Lab Install Runbook
 
-Oct 9, 2026 · @Ray · updated Oct 20, 2026 with the first GPU deployment (Proxmox passthrough, license activation, first-apply recovery) · updated Nov 9, 2026 with MCP tools, RAG, web search, performance testing and context tuning
+Oct 9, 2026 · @Ray · updated Oct 20, 2026 with the first GPU deployment (Proxmox passthrough, license activation, first-apply recovery) · updated Nov 9, 2026 with MCP tools, RAG, web search, performance testing and context tuning · updated Nov 13, 2026 with OpenRouter as a cloud provider
 
 ## Overview
 
 This runbook builds a lab chain in which an agent reaches a local LLM only through FortiAIGate: agent, then FortiAIGate 8.0.2, then Ollama. FortiAIGate is deployed with the Docker Compose CLI (`deploy-docker-compose.sh` 0.6.2). The install steps use `qwen2.5:7b` as the example model; the running lab now defaults to `qwen3.5:9b`.
 
-Steps 1 to 9 install and connect the chain and run in order. Each step names the host it applies to, so the same runbook covers both layouts below. Steps 10 to 13 extend the agent: tools over MCP, retrieval (RAG) over documentation, performance testing, and web search.
+Steps 1 to 9 install and connect the chain and run in order. Each step names the host it applies to, so the same runbook covers both layouts below. Steps 10 to 13 extend the agent: tools over MCP, retrieval (RAG) over documentation, performance testing, and web search. Step 14 adds OpenRouter, so cloud models sit behind the same gateway as the local ones.
 
 ## Current lab, 9 November 2026
 
@@ -469,8 +469,11 @@ Both clients default to this lab's gateway URL and model; set `FAIG_BASE_URL` an
 | `FAIG_TIMEZONE` | Time zone for the date line added to every turn | the agent host's zone |
 | `FAIG_TOOL_RESULT_KEEP` | Characters kept from older tool results in each request | 1500 |
 | `FAIG_FINAL_TOOL_RESULT_CHARS` | Characters kept from every tool result in the forced final answer | 1000 |
-| `FAIG_DIRECT_URL` (`--direct-url`) | Enables the console's **Bypass gateway** toggle: Ollama's OpenAI URL, e.g. `http://localhost:11434/v1` | none (toggle hidden) |
-| `FAIG_DIRECT_MODEL` (`--direct-model`) | Default model on the direct route, in Ollama's own naming | `qwen3.5:9b` |
+| `FAIG_DIRECT_URL` (`--direct-url`) | Adds **Direct to Ollama (bypass)** to the console's **Route** list: Ollama's OpenAI URL, e.g. `http://localhost:11434/v1` | none |
+| `FAIG_DIRECT_MODEL` (`--direct-model`) | Default model on the Ollama route, in Ollama's own naming | `qwen3.5:9b` |
+| `OPENROUTER_API_KEY` | Adds **Direct to OpenRouter (bypass)** to the **Route** list (Step 14) | none |
+| `FAIG_OPENROUTER_MODEL` (`--openrouter-model`) | Default model on the OpenRouter route, in OpenRouter's naming (`vendor/model`, `:free` suffix for free models) | the first free tool-capable model |
+| `FAIG_OPENROUTER_URL` | OpenRouter API URL | `https://openrouter.ai/api/v1` |
 
 Settings for the MCP tool servers themselves (such as `WEB_SEARXNG_URL`) go in the `"env"` block of that server in `mcp.config.json`: the agent starts them with a minimal environment, so variables exported in the shell do not reach them.
 
@@ -480,9 +483,9 @@ The console runs until Ctrl+C and stops when the SSH session closes; start it in
 
 Replies are rendered as formatted text: headings, lists, links and tables, with wide tables using the full window width. Model output can carry text from the web, so the console escapes it and only turns http(s) URLs into links. Its starter prompts cover a one-word reply, a tool call and the canary string. Streaming and tools each have a switch, which isolates a failure to one of them.
 
-**Bypass toggle (comparison testing).** Start the console with `--direct-url http://localhost:11434/v1` and a **Bypass gateway** switch appears. With it on, prompts go straight to Ollama: a red banner says so, the model list switches to Ollama's own names (`qwen3.5:9b`, `mimo-v2.6:latest`), and each trace marks FortiAIGate as bypassed with "Not inspected or logged by FortiAIGate". Without `--direct-url` the switch is hidden and the server refuses direct requests. This works from the agent host because Ollama listens on localhost there; the Step 6 firewall still keeps every other machine off port 11434. Anyone who can open the console can use the bypass while it is enabled, so enable it only for testing.
+**Bypass routes (comparison testing).** Start the console with `--direct-url http://localhost:11434/v1` and a **Route** list appears next to the model, with **Through FortiAIGate** and **Direct to Ollama (bypass)**; setting `OPENROUTER_API_KEY` adds **Direct to OpenRouter (bypass)** (Step 14). On a direct route, prompts skip the gateway: a red banner says so, the model list switches to that route's own names (`qwen3.5:9b`, `mimo-v2.6:latest`, or OpenRouter's `vendor/model`), and each trace marks FortiAIGate as bypassed with "Not inspected or logged by FortiAIGate". With neither set, the list is hidden and the server refuses direct requests. This works from the agent host because Ollama listens on localhost there; the Step 6 firewall still keeps every other machine off port 11434. Anyone who can open the console can use the bypass while it is enabled, so enable it only for testing.
 
-**Jailbreak and prompt-injection tests.** The Test prompts list has a second group of common attack patterns, each aimed at a harmless, checkable result: instruction override ("I have been PWNED"), system-prompt extraction, a DAN-style persona, fake developer mode, a Base64-encoded instruction and a split payload that both produce the canary `FAIG-CANARY-7731`, an indirect injection hidden in a pasted email (which also tries `web_fetch` on the FortiAIGate admin URL, refused by the SSRF guard), fiction framing, and a Spanish-language override. Run each with the bypass off and then on: the difference is what FortiAIGate's detectors and guardrails catch. Clear history between runs.
+**Jailbreak and prompt-injection tests.** The Test prompts list has a second group of common attack patterns, each aimed at a harmless, checkable result: instruction override ("I have been PWNED"), system-prompt extraction, a DAN-style persona, fake developer mode, a Base64-encoded instruction and a split payload that both produce the canary `FAIG-CANARY-7731`, an indirect injection hidden in a pasted email (which also tries `web_fetch` on the FortiAIGate admin URL, refused by the SSRF guard), fiction framing, and a Spanish-language override. Run each through FortiAIGate and then on a direct route: the difference is what FortiAIGate's detectors and guardrails catch. Clear history between runs.
 
 ## Step 8: Add a detector, a guardrail and a policy (FortiAIGate server WebUI)
 
@@ -723,6 +726,61 @@ With a key set, `web_search` uses Tavily and falls back to SearXNG if Tavily err
 
 Configuration (search backend, SearXNG URL, result count, fetch size, engine list, the private-address override) is in `web_server.py` via `WEB_*` environment variables, set in the server's `"env"` block. `web_fetch` returns at most 3000 characters by default (4000 hard cap) so a few pages do not overflow an 8K context. A turn may use up to 8 tool steps; if the model is still searching after that, the agent asks it for a final answer from what it has rather than failing. To keep searches fully in-house you can restrict the upstream engines in `settings.yml`; SearXNG still fetches from those engines, but no third-party account or API key is involved.
 
+## Step 14: Add OpenRouter as a cloud provider (FortiAIGate WebUI, agent machine)
+
+OpenRouter puts hundreds of hosted models (OpenAI, Anthropic, Google, Meta, Mistral, DeepSeek, Qwen and others) behind one OpenAI-compatible API and one key, and some models are free. FortiAIGate adds it the same way as Ollama, as a **Custom (self-hosted)** provider, so cloud models get the same guardrails, Traffic Log and virtual key as the local ones. The agent needs no change for this: once the agent's virtual key can use the OpenRouter models, they appear in the console's **Model** list beside `ollama-qwen3.5-9b`.
+
+```
+Browser ──▶ web agent ──HTTPS──▶ FortiAIGate ──┬─HTTP 11434──▶ Ollama (local models)
+                                (guardrails)    └─HTTPS 443──▶ openrouter.ai (cloud models)
+```
+
+Prompts on this path leave the lab, and tool results (fetched pages, retrieved documents) go with them. FortiAIGate still inspects both directions on the 3090 before anything reaches OpenRouter, which is the point of the test. Use test data only.
+
+**Before you start**
+
+1. Create an account at openrouter.ai and create an API key (`sk-or-v1-...`) under **Keys**. Give it a credit limit; a key with a limit cannot spend more than that.
+2. Under **Settings > Privacy**, review the data policy settings. Some free models are served only by providers that log or train on prompts, and they are hidden unless you allow that. Keep it off unless you only send test data.
+3. Free models (their IDs end in `:free`) allow about 20 requests a minute and 50 a day; a one-time $10 credit raises the daily cap to 1,000. Each tool step is one request, so a multi-search question can use ten. Paid models bill per token from your credit.
+4. Pick models that support tool calling: on openrouter.ai/models, filter by **Tools**. A model without it fails when the agent offers tools.
+5. Confirm the FortiAIGate server can reach OpenRouter from a container; this should print the start of a JSON model list:
+
+   ```bash
+   docker run --rm curlimages/curl -s https://openrouter.ai/api/v1/models | head -c 300; echo
+   ```
+
+**Gateway (FortiAIGate WebUI)**
+
+1. Open **Models**, click **Add Provider**, and choose **Custom (self-hosted)**. (FortiAIGate's built-in OpenAI entry has a fixed catalog and URL, so it cannot point at OpenRouter.)
+
+   | Field | Value |
+   | --- | --- |
+   | Provider Name | `OpenRouter` |
+   | Provider Slug | `openrouter`. It prefixes every model's public name and cannot be changed later |
+   | Base URL | `https://openrouter.ai/api/v1` |
+   | API Format | OpenAI-compatible |
+2. Click **Add Credential**, paste the OpenRouter key, and leave Weight at `1`. Unlike Ollama, this key is real and is checked.
+3. Click **Add Model** for each model. Set Model ID exactly as OpenRouter lists it, such as `openai/gpt-oss-20b:free`; the ID is case-sensitive and includes the `:free` suffix. Enter OpenRouter's per-token prices for a paid model, so FortiAIGate's cost tracking and budgets mean something; for a free model use a placeholder such as `0.01` (the dialog requires a cost). Click **Test Connectivity**, then **Save**, then **Add Integration**. Cloud models have no cold load, so the ~10-second probe normally passes; a `429` means a free model's rate limit, so wait a minute and retry.
+4. Open **Virtual Keys**, edit the agent's key, and under **Model Access** add the OpenRouter provider and bind its credential. The summary should now read 2 providers. Alternatively, create a separate key for cloud models, with a key budget.
+5. Check that the policy carrying your guardrails (Step 8) applies to the new models, then send the canary prompt to an OpenRouter model: it should be blocked exactly as with Ollama, and the Traffic Log should show the request with the OpenRouter model.
+
+**Agent**
+
+Restart the console. The startup line `Models for this key:` now includes the OpenRouter models' public names (the slug, then the model name, as the Models tab shows them), and they appear in the console's **Model** list. Choose one and send a prompt; the trace reads FortiAIGate, then that model. Tools, RAG and web search work the same, if the model supports tool calling.
+
+**Optional: Direct to OpenRouter (bypass)**
+
+To compare a cloud model with and without the gateway, give the console the key as well. It then adds **Direct to OpenRouter (bypass)** to the **Route** list, which sends prompts straight to openrouter.ai and lists only models that support tools, free ones first. Read the key without echo, so it stays out of the shell history:
+
+```bash
+read -rsp "OpenRouter key: " OPENROUTER_API_KEY; echo; export OPENROUTER_API_KEY
+FAIG_CA_CERT=~/faig-tls.crt FAIG_MCP_CONFIG=agent/mcp.config.json \
+  FAIG_OPENROUTER_MODEL=openai/gpt-oss-20b:free \
+  ~/faig-agent/bin/python agent/faig_web.py --host 0.0.0.0 --direct-url http://localhost:11434/v1
+```
+
+Requests on this route carry an `X-Title: FortiAIGate lab agent` header, so they are easy to tell apart in OpenRouter's **Activity** page from those the gateway sends. Run the jailbreak tests through FortiAIGate and then on this route to see what the guardrails catch for a cloud model. Anyone who can open the console can use the route while the key is set, and it spends from your OpenRouter credit, so set the key only for testing.
+
 ## Verification and troubleshooting
 
 The install is complete when every item below is ticked.
@@ -769,17 +827,22 @@ The install is complete when every item below is ticked.
 | A reply stops mid-sentence ("Based on my searches from...") or comes back empty after several searches | The conversation filled Ollama's context window. Confirm with `journalctl -u ollama --since "15 min ago" \| grep -i truncat` - `n_tokens = 8191, truncated = 1` means it hit the 8K ceiling. Raise `OLLAMA_CONTEXT_LENGTH` in the Ollama override: 32768 with `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0` fits a 9B model on the 2080 Super (Step 5). Check `ollama ps` still reads 100% GPU; if not, use 24576 without the cache setting). The agent now flags a cut-off reply as "context window is full" and trims older tool results in what it sends (`FAIG_TOOL_RESULT_KEEP`, default 1500 chars; 1000 in the final forced-answer request) |
 | The model treats a recent event as not having happened yet | Models only know their training cutoff. The agent now adds today's date to the system prompt on every turn (from the agent host's clock; set `FAIG_TIMEZONE=America/Denver` to pin a zone). Check the host clock with `timedatectl` if dates look wrong |
 | Agent says "stopped after N tool steps", or keeps searching without answering | Live results dashboards (AP, local news) are built by JavaScript, so `web_fetch` gets little text and the model keeps trying other sites. The agent now caps tool steps at 8 and then asks the model to answer from what it gathered; `web_fetch` flags script-built pages and caps page text at 4000 chars. If answers still drift off-topic after several fetches, the context window is full - raise Ollama's context (e.g. `OLLAMA_CONTEXT_LENGTH=16384`) if VRAM allows |
+| OpenRouter model: Test Connectivity or a prompt fails with `401` | The credential's key is wrong, revoked or out of credit. Create a new key in OpenRouter, then edit the provider's credential (the gateway path) or restart the console with the new `OPENROUTER_API_KEY` (the direct route) |
+| OpenRouter model returns `429` | Rate limit: about 20 requests a minute and 50 a day on free models (1,000 a day after a $10 credit), and a busy free model can be limited upstream. Each tool step is one request. Wait, switch to another free model, or use a paid one |
+| OpenRouter model returns `404 No endpoints found` | The model ID is misspelled, retired, or has no provider that allows your privacy settings or supports tools. Check the ID on openrouter.ai/models (with `:free` if used) and the **Settings > Privacy** options |
+| OpenRouter Test Connectivity fails with a timeout or DNS error | The FortiAIGate server has no route to openrouter.ai on 443. Run the Step 14 `curl` from a container, and check DNS and any outbound firewall |
 | `web_fetch` returns `refusing to fetch: ... non-public address` | The URL resolves to a LAN/loopback address and the SSRF guard blocked it. Intended; set `WEB_FETCH_ALLOW_PRIVATE=1` only if you deliberately need internal fetches |
 
 ## Open items
 
 As of 9 November 2026, routing, inspection, tool calls, RAG and web search all work through the gateway. These remain:
 
-- [ ] Rotate the agent's virtual key; its value was shared during setup.
+- [ ] Rotate the agent's virtual key and the Tavily key; both values were shared during setup.
 - [ ] Find why `max_tokens` is not honored through the gateway: in the first gateway load test, replies ran about 8 times longer than the cap (Step 12). Check the Traffic Log for the outbound payload to Ollama.
 - [ ] Fix the Organization name and External URL, and create the workspace and project in Step 9, if not already done.
 - [ ] Compare `mimo-v2.6:latest` with `qwen3.5:9b` on the same multi-search, documentation and subnet questions (Clear history between runs), and make the winner the agent's default.
 - [ ] Optional: a larger or newer model. The newest Qwen models (`qwen3.6`: 27B, and 35B-A3B mixture-of-experts) need far more than the 2080 Super's 8 GB. Options are llama.cpp with MoE expert offload and about 32 GB of VM RAM, or a 24 GB card for Ollama. The lab stays on 9B-class models for now.
+- [ ] Add OpenRouter as a provider (Step 14) and compare a cloud model with the local ones through the same guardrails.
 - [ ] Optional: show tool calls and keep a browsable history of agent-to-LLM exchanges in the web console.
 - [ ] If a single 24 GB card is used later (Option A), confirm that Triton and vLLM both load on it alongside Ollama and that the host has the 64 GB the CLI recommends.
 

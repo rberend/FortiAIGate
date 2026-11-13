@@ -291,7 +291,8 @@ def describe_status_error(exc: APIStatusError) -> str:
     return f"[gateway HTTP {status}] {detail}"
 
 
-def build_client(base_url: str, api_key: str, ca_cert: str | None, timeout: float) -> OpenAI:
+def build_client(base_url: str, api_key: str, ca_cert: str | None, timeout: float,
+                 headers: dict | None = None) -> OpenAI:
     verify: ssl.SSLContext | bool = True
     if ca_cert:
         if not os.path.isfile(ca_cert):
@@ -299,7 +300,8 @@ def build_client(base_url: str, api_key: str, ca_cert: str | None, timeout: floa
         verify = ssl.create_default_context(cafile=ca_cert)
     http_client = DefaultHttpxClient(verify=verify, timeout=timeout)
     # No automatic retries: one prompt is one request in the gateway's Traffic Log.
-    return OpenAI(base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0)
+    return OpenAI(base_url=base_url, api_key=api_key, http_client=http_client, max_retries=0,
+                  default_headers=headers)
 
 
 def _tool_call_dict(call_id: str, name: str, arguments: str) -> dict:
